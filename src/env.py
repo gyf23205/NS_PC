@@ -11,6 +11,5 @@ class GridWorld(object):
     def update_heatmap(self):
         self.heatmap += 0.01
         self.heatmap[self.heatmap > self.temp_max] == self.temp_max
-        # for a in self.agents:
-
-    
+        for a in self.agents:
+            

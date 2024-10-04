@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from Env import GridWorld
+from env import GridWorld
 
 def plot_heatmap(hm, obstacle, agetns):
     '''
