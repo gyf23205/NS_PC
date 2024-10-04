@@ -109,9 +109,23 @@ def simulate(ref_states, cat_states, cat_controls, num_frames, step_horizon, N, 
 
 class MPC_CBF_Unicycle:
     def __init__(self, dt ,N, v_lim, omega_lim,  
-                 Q, R, cbf_const, 
-                 obstacles= None,  obs_diam = 0.5, robot_diam = 0.5, alpha=0.2):
-        
+                 Q, R, cbf_const, init_state, 
+                 obstacles= None,  obs_diam = 0.5, r_d = 0.5, r_c=2.0, r_s=1.0, alpha=0.2):
+        '''
+        Inputs:
+        dt: Scalar, computing period of the MPC solver.
+        N: Time horizen of the MPC solver.
+        Q: np array with size (3,), containing the diagnal elements of the PSD matrix which is used to penalize the states in the quadratic MPC cost.
+        R: np array with size (3,) vector, penalize inputs in the MPC cost.
+        v_lim: Scalar. Maximum velocity input.
+        omega_lim: Scalar. Maximum angular velocity input.
+        cbf_const: Bool. Flag to enable obstacle avoidance
+        init_state: np array. [init_x,init_y, init_omega]
+        r_d: Scalar. Radius of danger, i.e., collision radius.
+        r_c: Scalar. Communication radius.
+        r_s: Scalar. Sensing radius. Grids whose center locates in this range is considered as been "checked" by the robot. Heat of that grid is set to 0.
+        alpha: Positive scalar for class-K function.
+        '''
         self.dt = dt # Period
         self.N = N  # Horizon Length 
         
@@ -122,6 +136,7 @@ class MPC_CBF_Unicycle:
         self.R_omega = R[1]
         self.n_states = 0
         self.n_controls = 0
+        self.states = init_state
 
         self.v_lim = v_lim
         self.omega_lim = omega_lim
@@ -130,7 +145,9 @@ class MPC_CBF_Unicycle:
         self.solver = None
         self.f = None
 
-        self.robot_diam = robot_diam
+        self.r_d = r_d
+        self.r_c = r_c
+        self.r_s = r_s
         self.obs_diam = obs_diam
         self.cbf_const = cbf_const # Bool flag to enable obstacle avoidance
         self.alpha= alpha # Parameter for scalar class-K function, must be positive
@@ -138,6 +155,12 @@ class MPC_CBF_Unicycle:
 
         # Setup with initialization params
         self.setup()
+
+    def communication(self):
+        '''
+        Exchange information with neighbors with in the range of self.r_c.
+        '''
+        pass
 
     ## Utilies used in MPC optimization
     # CBF Implementation
@@ -152,7 +175,7 @@ class MPC_CBF_Unicycle:
         next_time = time + h
         next_control = casadi.horzcat(control[:, 1:],
                                     casadi.reshape(control[:, -1], -1, 1))
-
+        self.states = next_state
         return next_time, next_state, next_control
 
     def update_param(self, x0, ref, k, N):
@@ -208,8 +231,8 @@ class MPC_CBF_Unicycle:
                 state = X[:, k]
                 next_state = X[:, k+1]
                 for obs in self.obstacles:    
-                    h = self.h_obs(state, obs, (self.robot_diam / 2 + self.obs_diam / 2))
-                    h_next = self.h_obs(next_state, obs, (self.robot_diam / 2 + self.obs_diam / 2))
+                    h = self.h_obs(state, obs, (self.r_d / 2 + self.obs_diam / 2))
+                    h_next = self.h_obs(next_state, obs, (self.r_d / 2 + self.obs_diam / 2))
                     g = casadi.vertcat(g,-(h_next-h + self.alpha*h))
 
         opt_variables = casadi.vertcat(X.reshape((-1, 1)), U.reshape((-1, 1)))
