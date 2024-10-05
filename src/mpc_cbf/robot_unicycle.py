@@ -109,7 +109,7 @@ def simulate(ref_states, cat_states, cat_controls, num_frames, step_horizon, N, 
 
 class MPC_CBF_Unicycle:
     def __init__(self, dt ,N, v_lim, omega_lim,  
-                 Q, R, cbf_const, init_state, 
+                 Q, R, flag_cbf, init_state, 
                  obstacles= None,  obs_diam = 0.5, r_d = 0.5, r_c=2.0, r_s=1.0, alpha=0.2):
         '''
         Inputs:
@@ -119,8 +119,8 @@ class MPC_CBF_Unicycle:
         R: np array with size (3,) vector, penalize inputs in the MPC cost.
         v_lim: Scalar. Maximum velocity input.
         omega_lim: Scalar. Maximum angular velocity input.
-        cbf_const: Bool. Flag to enable obstacle avoidance
-        init_state: np array. [init_x,init_y, init_omega]
+        flag_cbf: Bool. Flag to enable obstacle avoidance
+        init_state: np array. [init_x, init_y, init_omega]
         r_d: Scalar. Radius of danger, i.e., collision radius.
         r_c: Scalar. Communication radius.
         r_s: Scalar. Sensing radius. Grids whose center locates in this range is considered as been "checked" by the robot. Heat of that grid is set to 0.
@@ -149,7 +149,7 @@ class MPC_CBF_Unicycle:
         self.r_c = r_c
         self.r_s = r_s
         self.obs_diam = obs_diam
-        self.cbf_const = cbf_const # Bool flag to enable obstacle avoidance
+        self.flag_cbf = flag_cbf # Bool flag to enable obstacle avoidance
         self.alpha= alpha # Parameter for scalar class-K function, must be positive
         self.obstacles = obstacles
 
@@ -226,7 +226,7 @@ class MPC_CBF_Unicycle:
             predicted_state = state + self.dt/6 * (k_1 + 2 * k_2 + 2 * k_3 + k_4)
             g = casadi.vertcat(g, next_state - predicted_state)
         
-        if self.cbf_const:
+        if self.flag_cbf:
             for k in range(self.N):
                 state = X[:, k]
                 next_state = X[:, k+1]
@@ -275,7 +275,7 @@ class MPC_CBF_Unicycle:
         lbx[self.n_states * (self.N + 1) + 1:self.n_states * (self.N + 1) + self.n_controls *self.N:self.n_controls] = self.omega_lim[0]
         ubx[self.n_states * (self.N + 1) + 1:self.n_states * (self.N + 1) + self.n_controls * self.N:self.n_controls] = self.omega_lim[1]
         
-        if self.cbf_const:
+        if self.flag_cbf:
             lbg = casadi.DM.zeros((self.n_states * (self.N + 1) + len(self.obstacles)*(self.N), 1))
             ubg = casadi.DM.zeros((self.n_states * (self.N + 1) + len(self.obstacles)*(self.N), 1))
 
@@ -335,7 +335,7 @@ def main(args=None):
     R = [R_v, R_omega]
     obs_list = [(4,0), (8,5), (6,9), (2, -4), (8,-5), (6,-9), (5, -6)]
 
-    mpc_cbf = MPC_CBF_Unicycle(dt,N, v_lim, omega_lim, Q, R, obstacles= obs_list, cbf_const=True)
+    mpc_cbf = MPC_CBF_Unicycle(dt,N, v_lim, omega_lim, Q, R, obstacles= obs_list, flag_cbf=True)
     state_0 = casadi.DM([x_0, y_0, theta_0])
     u0 = casadi.DM.zeros((mpc_cbf.n_controls, N))
     X0 = casadi.repmat(state_0, 1, N + 1)
