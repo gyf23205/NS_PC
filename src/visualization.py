@@ -29,9 +29,8 @@ def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, 
         # Colormap
         green_colormap = np.zeros((256, 1, 3), dtype=np.uint8)  # BGR
         green_colormap[:, 0, 0] = np.linspace(0, 100, 256)  # Blue channel  0 - 100
-        green_colormap[:, 0, 1] = np.arange(256)  # Green channel  0 - 256
+        green_colormap[:, 0, 1] = np.arange(256)  # Green channel  0 - 255
         green_colormap[:, 0, 2] = np.linspace(0, 100, 256)  # Red channel  0 - 100
-        
         hm_show = cv2.applyColorMap(hm_normed, green_colormap)
         
         # # Mark agents
@@ -126,7 +125,8 @@ def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, 
     #   horizon
     horizon, = ax.plot([], [], 'x-g', alpha=0.5)
 
-    hm = plt.imshow(np.ones(heatmaps[0].shape)*255)
+
+    hm = plt.imshow(np.ones(heatmaps[0].shape)*255, origin='lower', extent=[0., world.len_grid * size_world[0], 0, world.len_grid * size_world[1]])
 
     #   current_state
     current_triangle = create_triangle(reference[:3])
@@ -148,13 +148,13 @@ def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, 
         repeat=False
     )
 
-    # if save == True:
-    #     sim.save('./animation' + str(time()) +'.gif', writer='ffmpeg', fps=30)
+    if save == True:
+        sim.save('heatmap.gif', writer='ffmpeg', fps=30)
     plt.show()
     return sim
 
 def main(args=None):
-    world = GridWorld(size_world=(40, 40), len_grid=0.5, obstacles=None)
+    world = GridWorld(size_world=(50, 50), len_grid=2, obstacles=None)
 
     Q_x = 10
     Q_y = 10
@@ -167,14 +167,14 @@ def main(args=None):
     idx = 0
     t0 = 0
 
-    # x in [0, size_world[0]], y in [0, size_world[1]]
+    # x in [0, size_world[0]], y in [0, size_world[1] * world.len_grid]
     x_0 = 0
     y_0 = 0
     theta_0 = 0
 
-    # x in [0, size_world[0]], y in [0, size_world[1]]
-    x_goal = 10
-    y_goal = 5
+    # x in [0, size_world[0]], y in [0, size_world[1]* world.len_grid]
+    x_goal = 60
+    y_goal = 30
     theta_goal = np.pi/2
 
     r = 1 
@@ -201,6 +201,7 @@ def main(args=None):
 
     x_arr = [x_0]
     y_arr = [y_0]
+    states_hist = [np.array(init_state)]
     heatmaps = [np.copy(world.heatmap)]
     for i in range(len(ref_states)): 
         u, X_pred = mpc_cbf.solve(X0, u0, ref_states, i)
@@ -209,7 +210,8 @@ def main(args=None):
         cat_controls = np.dstack((cat_controls, dm_to_array(u[:, 0])))
         
         t0, X0, u0 = mpc_cbf.shift_timestep(dt, t0, X_pred, u)
-        mpc_cbf.states = X0[:, 0]
+        mpc_cbf.states = X0[:, 1]
+        states_hist.append(mpc_cbf.states)
         world.update_heatmap()
         
         heatmaps.append(np.copy(world.heatmap))

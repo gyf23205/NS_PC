@@ -1,5 +1,5 @@
 import numpy as np
-
+import matplotlib.pyplot as plt
 class GridWorld(object):
     def __init__(self, size_world, len_grid, obstacles) -> None:
         '''
@@ -15,6 +15,11 @@ class GridWorld(object):
         self.len_grid = len_grid
         self.x_coord = 0.5 * len_grid + np.repeat(np.arange(size_world[1])[None, :] * len_grid, size_world[0], axis=0)
         self.y_coord = 0.5 * len_grid + np.repeat(np.arange(size_world[0])[:, None] * len_grid, size_world[1], axis=1)
+        # fig, ax = plt.subplots()
+        # im = ax.imshow(self.x_coord)
+        # plt.xlim((0,40))
+        # plt.ylim((0,40))
+        # plt.show()
         # self.center_locations = np.empty((*size_world, 2))
         # self.center_locations[:, :, 0] = x_coord
         # self.center_locations[:, :, 1] = y_coord
@@ -25,13 +30,18 @@ class GridWorld(object):
         Update the heatmap given the current position of one agent.
         '''
         dist = np.sqrt((self.x_coord - agent.states[0])**2 + (self.y_coord - agent.states[1])**2)
+        # fig, ax = plt.subplots()
+        # im = ax.imshow(dist)
+        # plt.xlim((0,80))
+        # plt.ylim((0,80))
+        # plt.show()
         checked_grid = dist < agent.r_s
         self.heatmap[checked_grid] = 0
 
 
     def update_heatmap(self):
         self.heatmap += 0.01
-        self.heatmap[self.heatmap > self.temp_max] == self.temp_max
+        self.heatmap[self.heatmap > self.temp_max] = self.temp_max
         for a in self.agents:
             self.check(a)
 
