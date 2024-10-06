@@ -29,7 +29,7 @@ def plot_heatmap(world, obstacle):
     
     # Mark agents
     for agent in world.agents:
-        dist = np.sqrt((world.x_coord - agent.state[0])**2 + (world.y_coord - agent.state[1])**2)
+        dist = np.sqrt((world.x_coord - agent.states[0])**2 + (world.y_coord - agent.states[1])**2)
         agent_area = dist < agent.r_s
         hm_show[agent_area] = [255, 255, 255]  # White color for agent
     # hm_show[int(agent.state[0]), int(agent.state[1]), :] = 0
@@ -51,7 +51,7 @@ def anim(i):
 
     # update world and agents
     world.update_heatmap()
-    world.agents[0].state += 1.0 
+    world.agents[0].states += 1.0 
 
     # plot
     img = plot_heatmap(world, obstacle)
@@ -59,12 +59,12 @@ def anim(i):
 
 if __name__ == "__main__":
     # initial environment
-    world = GridWorld((100, 100), 1)
+    world = GridWorld((100, 100), 1, None)
 
     # initial agents
     class Agent(object):
         def __init__(self, init_state) -> None:
-            self.state = init_state
+            self.states = init_state
             self.r_s = 10.0
     agents = [Agent(np.array([0., 0.]))]
     world.add_agents(agents)

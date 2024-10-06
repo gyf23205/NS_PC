@@ -1,7 +1,7 @@
 import numpy as np
 
 class GridWorld(object):
-    def __init__(self, size_world, len_grid) -> None:
+    def __init__(self, size_world, len_grid, obstacles) -> None:
         '''
         The left-up is (0, 0). Down and right are positive directions for y and x.
         size: 2-D integer array. Size of the grid world.
@@ -24,7 +24,7 @@ class GridWorld(object):
         '''
         Update the heatmap given the current position of one agent.
         '''
-        dist = np.sqrt((self.x_coord - agent.state[0])**2 + (self.y_coord - agent.state[1])**2)
+        dist = np.sqrt((self.x_coord - agent.states[0])**2 + (self.y_coord - agent.states[1])**2)
         checked_grid = dist < agent.r_s
         self.heatmap[checked_grid] = 0
 
@@ -41,7 +41,7 @@ class GridWorld(object):
 
 
 if __name__=='__main__':
-    world = GridWorld((10, 10), 1)
+    world = GridWorld((10, 10), 1, None)
     class Agent(object):
         def __init__(self, init_state) -> None:
             self.state = init_state
