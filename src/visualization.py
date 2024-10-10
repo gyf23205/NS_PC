@@ -149,12 +149,12 @@ def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, 
     )
 
     if save == True:
-        sim.save('heatmap.gif', writer='ffmpeg', fps=30)
+        sim.save('results/heatmap.gif', writer='ffmpeg', fps=30)
     plt.show()
     return sim
 
 def main(args=None):
-    world = GridWorld(size_world=(50, 50), len_grid=2, obstacles=None)
+    world = GridWorld(size_world=(20, 20), len_grid=1, obstacles=None)
 
     Q_x = 10
     Q_y = 10
@@ -164,7 +164,7 @@ def main(args=None):
 
     dt = 0.1
     N = 20
-    idx = 0
+    # idx = 0
     t0 = 0
 
     # x in [0, size_world[0]], y in [0, size_world[1] * world.len_grid]
@@ -173,8 +173,8 @@ def main(args=None):
     theta_0 = 0
 
     # x in [0, size_world[0]], y in [0, size_world[1]* world.len_grid]
-    x_goal = 60
-    y_goal = 30
+    x_goal = 12
+    y_goal = 18
     theta_goal = np.pi/2
 
     r = 1 
@@ -199,9 +199,9 @@ def main(args=None):
     cat_states = dm_to_array(X0)
     cat_controls = dm_to_array(u0[:, 0])
 
-    x_arr = [x_0]
-    y_arr = [y_0]
-    states_hist = [np.array(init_state)]
+    # x_arr = [x_0]
+    # y_arr = [y_0]
+    # states_hist = [np.array(init_state)]
     heatmaps = [np.copy(world.heatmap)]
     for i in range(len(ref_states)): 
         u, X_pred = mpc_cbf.solve(X0, u0, ref_states, i)
@@ -211,13 +211,13 @@ def main(args=None):
         
         t0, X0, u0 = mpc_cbf.shift_timestep(dt, t0, X_pred, u)
         mpc_cbf.states = X0[:, 1]
-        states_hist.append(mpc_cbf.states)
+        # states_hist.append(mpc_cbf.states)
         world.update_heatmap()
         
         heatmaps.append(np.copy(world.heatmap))
-        x_arr.append(X0[0,1])
-        y_arr.append(X0[1,1])
-        idx += 1
+        # x_arr.append(X0[0,1])
+        # y_arr.append(X0[1,1])
+        # idx += 1
     
     num_frames = len(ref_states)
     # To be replaced
