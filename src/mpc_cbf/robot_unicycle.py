@@ -9,7 +9,7 @@ from utils import dm_to_array
 class MPC_CBF_Unicycle:
     def __init__(self, dt ,N, v_lim, omega_lim,  
                  Q, R, flag_cbf, init_state, 
-                 obstacles= None,  obs_diam = 0.5, r_d = 0.5, r_c=2.0, r_s=1.0, alpha=0.2):
+                 obstacles= None,  obs_diam = 3, r_d = 0.5, r_c=2.0, r_s=5.0, alpha=0.005):
         '''
         Inputs:
         dt: Scalar, computing period of the MPC solver.
@@ -64,7 +64,7 @@ class MPC_CBF_Unicycle:
     ## Utilies used in MPC optimization
     # CBF Implementation
     def h_obs(self, state, obstacle, r):
-            ox, oy = obstacle
+            ox, oy, obsr = obstacle
             return ((ox - state[0])**2 + (oy - state[1])**2 - r**2)
 
 

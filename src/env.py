@@ -8,7 +8,7 @@ class GridWorld(object):
         len_grid: Edge length of each square grid.
         '''
         self.obstacle = None # Add later
-        self.heatmap = np.zeros(size_world)
+        self.heatmap = np.ones(size_world)
         self.agents = []
         self.env_state = None
         self.temp_max = 1
@@ -40,7 +40,7 @@ class GridWorld(object):
 
 
     def update_heatmap(self):
-        self.heatmap += 0.005
+        self.heatmap += 0.003
         self.heatmap[self.heatmap > self.temp_max] = self.temp_max
         for a in self.agents:
             self.check(a)
