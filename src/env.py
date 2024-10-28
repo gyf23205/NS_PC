@@ -49,6 +49,32 @@ class GridWorld(object):
     def add_agents(self, agents):
         self.agents = agents
 
+    def get_cost_max(self):
+        '''
+        Get the maximum value of the heatmap, it could be strict and the reward is always -max
+        '''
+        return -np.max(self.heatmap)
+    
+    def get_cost_avg(self):
+        '''
+        For every grid in the heatmap, reward = - (distance to the cloest agent) * heat of this grid.
+        But this could be too gentle, leaving some grid not been checked at all.
+        '''
+        dists = []
+        for agent in self.agents:
+            dists.append(np.sqrt((self.x_coord - agent.states[0])**2 + (self.y_coord - agent.states[1])**2))
+        dists = np.array(dists)
+        idx_agent_cloest = np.argmin(dists, axis=0)
+        cost = np.zeros_like(dists[0, :, :])
+        # Try to get rid of the double for loop
+        for i in range(cost.shape[0]):
+            for j in range(cost.shape[1]):
+                cost[i, j] = self.heatmap[i, j] * dists[idx_agent_cloest[i, j], i, j]
+
+        return cost
+
+
+
 
 if __name__=='__main__':
     world = GridWorld((10, 10), 1, None)

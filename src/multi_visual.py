@@ -127,6 +127,8 @@ def simulate(world, ref_states_list, cat_states_list, heatmaps, obstacles, cat_c
 
 
     hm = plt.imshow(np.ones(heatmaps[0].shape)*255, origin='lower', extent=[0., world.len_grid * size_world[0], 0, world.len_grid * size_world[1]])
+    plt.xlabel('x position')
+    plt.ylabel('y position')
     blue_cmp = plt.get_cmap('seismic', 256)
     blue_cmp = ListedColormap(blue_cmp(np.linspace(0, 0.3, 256)))
     
@@ -150,7 +152,7 @@ def simulate(world, ref_states_list, cat_states_list, heatmaps, obstacles, cat_c
         repeat=False
     )
     if save == True:
-        sim.save('heatmap.gif', writer='ffmpeg', fps=30)
+        sim.save('results/heatmap.mp4', writer='ffmpeg', fps=50)
     plt.show()
     return sim
 
@@ -171,7 +173,7 @@ def main(args=None):
     r = 3 
     v = 1
 
-    v_lim = [-1, 1]
+    v_lim = [-2, 2]
     omega_lim = [-casadi.pi/4, casadi.pi/4]
     Q = [Q_x, Q_y, Q_theta]
     R = [R_v, R_omega]
@@ -181,7 +183,9 @@ def main(args=None):
     # init_states = np.array([[0, 0, 0], [30, 20, 0]]) # [x, y, theta]
     n_agents = 3
     n_targets = 3
-    xy_goals = np.random.rand(n_agents, n_targets, 2)
+    # xy_goals = np.random.rand(n_agents, n_targets, 2)
+    xy_goals = np.array([[[5, 45], [20, 10], [5, 5]], [[10, 10], [45, 5], [35, 30]], [[45, 30], [15, 45], [30, 35]]], dtype=np.float32) / 50
+    # xy_goals = np.array([[[5, 45], [20, 10]], [[10, 10], [45, 5]], [[45, 45], [15, 45]]], dtype=np.float32)
     xy_goals[:, :, 0] = xy_goals[:, :, 0] * size_world[0] * len_grid
     xy_goals[:, :, 1] = xy_goals[:, :, 1] * size_world[1] * len_grid
     theta_goals = np.random.rand(n_agents, n_targets, 1)
@@ -190,6 +194,7 @@ def main(args=None):
     t0_list = [0 for i in range(n_agents)]
     agents = [MPC_CBF_Unicycle(dt, N, v_lim, omega_lim, Q, R, init_state=state_goal_list[i, 0, :], obstacles= obstacles, flag_cbf=True) for i in range(n_agents)]
     ref_states_list = []
+    print('Generating ref trajectories...')
     for k in range(n_targets-1):
         for i in range(n_agents):
             path_x, path_y, path_yaw, _, _ = plan_dubins_path(state_goal_list[i, k, 0], state_goal_list[i, k, 1], state_goal_list[i, k, 2],
@@ -209,6 +214,7 @@ def main(args=None):
     heatmaps = [np.copy(world.heatmap)]
     trip_lens = [len(ref_states) for ref_states in ref_states_list]
     longest_trip = np.max(trip_lens)
+    print('Computing MPC trajectories...')
     for i in range(longest_trip):
         for j in range(n_agents):
             if i < len(ref_states_list[j]):
@@ -225,6 +231,7 @@ def main(args=None):
 
     align_length(cat_states_list, longest_trip+1)
     align_length(cat_controls_list, longest_trip+1)
+    print('Drawing...')
     simulate(world, ref_states_list, cat_states_list, heatmaps, obstacles, cat_controls_list, longest_trip, dt, N,
          state_goal_list[:, 0, :], save=True)
 
