@@ -62,14 +62,14 @@ class GridWorld(object):
         '''
         dists = []
         for agent in self.agents:
-            dists.append(np.sqrt((self.x_coord - agent.states[0])**2 + (self.y_coord - agent.states[1])**2))
+            dists.append(np.sqrt((self.x_coord - agent.state[0])**2 + (self.y_coord - agent.state[1])**2))
         dists = np.array(dists)
         idx_agent_cloest = np.argmin(dists, axis=0)
         cost = np.zeros_like(dists[0, :, :])
         # Try to get rid of the double for loop
-        for i in range(cost.shape[0]):
-            for j in range(cost.shape[1]):
-                cost[i, j] = self.heatmap[i, j] * dists[idx_agent_cloest[i, j], i, j]
+        row, col = np.indices(self.heatmap.shape)  # row indices = column indices^T, 10*10. 
+        cost = self.heatmap * dists[idx_agent_cloest, row, col]  # dim(dists[idx_agent_cloest]) = 10*10*10*10, dim(dists[idx_agent_cloest, row, col]) = 10*10
+        
 
         return cost
 
