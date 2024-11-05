@@ -192,7 +192,7 @@ def main(args=None):
     state_goal_list = np.dstack((xy_goals, theta_goals)) # All goal points, state_goal_list[i, 0, :] is the init position for agent i
     # state_goal_list = np.array([[40, 25, np.pi/2], [5, 40, np.pi/2]])
     t0_list = [0 for i in range(n_agents)]
-    agents = [MPC_CBF_Unicycle(dt, N, v_lim, omega_lim, Q, R, init_state=state_goal_list[i, 0, :], obstacles= obstacles, flag_cbf=True) for i in range(n_agents)]
+    agents = [MPC_CBF_Unicycle(i, dt, N, v_lim, omega_lim, Q, R, init_state=state_goal_list[i, 0, :], obstacles= obstacles, flag_cbf=True) for i in range(n_agents)]
     ref_states_list = []
     print('Generating ref trajectories...')
     for k in range(n_targets-1):

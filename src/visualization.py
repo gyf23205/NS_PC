@@ -191,7 +191,7 @@ def main(args=None):
 
     # TODO Move the definition of obstacles to env, not in agents
     init_state = [x_0, y_0, theta_0]
-    mpc_cbf = MPC_CBF_Unicycle(dt,N, v_lim, omega_lim, Q, R, init_state=np.array(init_state), obstacles= obs_list, flag_cbf=True)
+    mpc_cbf = MPC_CBF_Unicycle(0, dt,N, v_lim, omega_lim, Q, R, init_state=np.array(init_state), obstacles= obs_list, flag_cbf=True)
     world.add_agents([mpc_cbf])
     state_0 = casadi.DM(init_state)
     u0 = casadi.DM.zeros((mpc_cbf.n_controls, N))

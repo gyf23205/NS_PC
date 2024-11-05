@@ -1,13 +1,16 @@
 import numpy as np
 import casadi
 import matplotlib
+import hypers
+import torch
 matplotlib.use('tkagg')
 from mpc_cbf.plan_dubins import plan_dubins_path
 # from visualization import simulate
 from utils import dm_to_array
+from gcn import GraphConvNet
 
 class MPC_CBF_Unicycle:
-    def __init__(self, dt ,N, v_lim, omega_lim,  
+    def __init__(self, id, dt ,N, v_lim, omega_lim,  
                  Q, R, flag_cbf, init_state, 
                  obstacles= None,  obs_diam = 3, r_d = 0.5, r_c=2.0, r_s=5.0, alpha=0.005):
         '''
@@ -25,9 +28,9 @@ class MPC_CBF_Unicycle:
         r_s: Scalar. Sensing radius. Grids whose center locates in this range is considered as been "checked" by the robot. Heat of that grid is set to 0.
         alpha: Positive scalar for class-K function.
         '''
+        self.id = id # 0 ~ N-1
         self.dt = dt # Period
         self.N = N  # Horizon Length 
-        
         self.Q_x = Q[0]
         self.Q_y = Q[1]
         self.Q_theta = Q[2]
@@ -51,15 +54,30 @@ class MPC_CBF_Unicycle:
         self.flag_cbf = flag_cbf # Bool flag to enable obstacle avoidance
         self.alpha= alpha # Parameter for scalar class-K function, must be positive
         self.obstacles = obstacles
-
+        self.neighbors = None
+        self.local_observe = None
+        
         # Setup with initialization params
         self.setup()
 
-    def communication(self):
+    def update_neighbors(self, dist):
+        self.neighbors = np.where(dist <= self.r_c)
+
+    def set_decision_NN(self, dim_observe):
+        self.decisionNN = GraphConvNet(hypers.n_embed_channel, size_kernal=3, dim_observe=dim_observe, n_rel=hypers.n_rel)
+
+    def embed_local(self, observe):
+        self.local_observe = self.decisionNN.embed_observe(observe)
+
+    def generate_waypoints(self, observe, neighbors_observe):
         '''
-        Exchange information with neighbors with in the range of self.r_c.
+        Generate waypoints given local observation and neighbors' embeded information
+        observe: (1, dim_map, dim_map)
+        neighbors_observe: (n_neighbors, dim_embed)
         '''
-        pass
+        prob = self.decisionNN(observe, neighbors_observe)
+        actions = torch.multinomial(prob, hypers.n_waypoints, replacement=False).numpy()
+        return actions
 
     ## Utilies used in MPC optimization
     # CBF Implementation
