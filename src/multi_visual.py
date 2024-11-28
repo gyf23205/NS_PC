@@ -225,8 +225,9 @@ def main(args=None):
                 
                 t0_list[j], X0_list[j], u0_list[j] = agents[j].shift_timestep(dt, t0_list[j], X_pred, u)
                 agents[j].states = X0_list[j][:, 1]
-
-        world.update_heatmap()        
+       
+        world.step_heatmap()   
+        _ =world.check()     
         heatmaps.append(np.copy(world.heatmap))
 
     align_length(cat_states_list, longest_trip+1)

@@ -1,18 +1,19 @@
 import numpy as np
 import casadi
 import matplotlib
-import hypers
 import torch
+from torch.distributions import Categorical
 matplotlib.use('tkagg')
+import hypers
 from mpc_cbf.plan_dubins import plan_dubins_path
 # from visualization import simulate
 from utils import dm_to_array
-from gcn import GraphConvNet
+from networks.gcn import GraphConvNet
 
 class MPC_CBF_Unicycle:
     def __init__(self, id, dt ,N, v_lim, omega_lim,  
                  Q, R, flag_cbf, init_state, 
-                 obstacles= None,  obs_diam = 3, r_d = 0.5, r_c=2.0, r_s=5.0, alpha=0.005):
+                 obstacles= None,  obs_diam = 3, r_d = 0.5, r_c=2.0, r_s:int=5, alpha=0.005, dev='cuda'):
         '''
         Inputs:
         dt: Scalar, computing period of the MPC solver.
@@ -25,7 +26,7 @@ class MPC_CBF_Unicycle:
         init_state: np array. [init_x, init_y, init_omega]
         r_d: Scalar. Radius of danger, i.e., collision radius.
         r_c: Scalar. Communication radius.
-        r_s: Scalar. Sensing radius. Grids whose center locates in this range is considered as been "checked" by the robot. Heat of that grid is set to 0.
+        r_s: Integer for square shape sensing regions. Sensing radius. Grids whose center locates in this range is considered as been "checked" by the robot. Heat of that grid is set to 0.
         alpha: Positive scalar for class-K function.
         '''
         self.id = id # 0 ~ N-1
@@ -55,19 +56,29 @@ class MPC_CBF_Unicycle:
         self.alpha= alpha # Parameter for scalar class-K function, must be positive
         self.obstacles = obstacles
         self.neighbors = None
-        self.local_observe = None
-        
+        self.local_embed = None
+        # self.running = False # Indicate if current waypoints have all been visited.
+        # self.buffer_states = [] # Store all the future MPC-generated states for current set of waypoints.
+        # self.pointer_buffer_state = 0
+        # self.buffer_cost = []
+        # self.log_prob = None
+        self.dev = dev
         # Setup with initialization params
         self.setup()
 
-    def update_neighbors(self, dist):
-        self.neighbors = np.where(dist <= self.r_c)
+    def get_discount_cost(self, costs):
+        discounts = torch.tensor([hypers.discount**(i+1) for i in range(len(costs))])
+        return torch.sum(costs * discounts)
 
-    def set_decision_NN(self, dim_observe):
-        self.decisionNN = GraphConvNet(hypers.n_embed_channel, size_kernal=3, dim_observe=dim_observe, n_rel=hypers.n_rel)
+    def update_neighbors(self, dist):
+        self.neighbors = np.where(dist <= self.r_c)[0]
+
+    # def set_decision_NN(self, dim_observe, size_world):
+    #     self.decisionNN = GraphConvNet(hypers.n_embed_channel, size_kernal=3, dim_observe=dim_observe, size_world=size_world, n_rel=hypers.n_rel)
 
     def embed_local(self, observe):
-        self.local_observe = self.decisionNN.embed_observe(observe)
+        observe = observe.to(self.dev)
+        self.local_embed = self.decisionNN.embed_observe(observe)
 
     def generate_waypoints(self, observe, neighbors_observe):
         '''
@@ -75,14 +86,21 @@ class MPC_CBF_Unicycle:
         observe: (1, dim_map, dim_map)
         neighbors_observe: (n_neighbors, dim_embed)
         '''
+        observe, neighbors_observe = torch.tensor(observe, dtype=torch.float32, device=self.dev), neighbors_observe.to(self.dev)
         prob = self.decisionNN(observe, neighbors_observe)
-        actions = torch.multinomial(prob, hypers.n_waypoints, replacement=False).numpy()
-        return actions
+        # actions = torch.multinomial(prob, 1).cpu().numpy() # Sample one destination for current time step
+        # log_prob = torch.log(prob)
+
+        dist = Categorical(prob)
+        action = dist.sample()
+        log_prob = dist.log_prob(action)
+
+        return action.cpu().numpy(), log_prob
 
     ## Utilies used in MPC optimization
     # CBF Implementation
     def h_obs(self, state, obstacle, r):
-            ox, oy, obsr = obstacle
+            ox, oy, _ = obstacle
             return ((ox - state[0])**2 + (oy - state[1])**2 - r**2)
 
 

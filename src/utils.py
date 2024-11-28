@@ -12,9 +12,10 @@ def action2waypoints(actions, world_size, len_grid):
     n_col = world_size[1]
     row = actions // n_col
     col = actions % n_col
-    coord_x = 0.5 * len_grid + row * len_grid
-    coord_y = 0.5 * len_grid + col * len_grid
-    return np.stack([coord_x, coord_y], axis=-1)
+    coord_x = 0.5 * len_grid + col * len_grid
+    coord_y = 0.5 * len_grid + row * len_grid
+    return np.array([coord_x, coord_y])
+    # return np.concat([coord_x, coord_y], axis=-1)
 
 
 if __name__=='__main__':
