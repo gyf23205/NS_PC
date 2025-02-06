@@ -24,7 +24,7 @@ def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, 
         hm_show: RGB map containing heatmap, obstacles and agents.
         '''
         # Normalize heatmap
-        hm_normed = ((world.temp_max - heatmaps[i]) / world.temp_max * 255).astype(np.uint8)  # substitute world.temp_max with 0.1 will be more apparent
+        hm_normed = ((world.heat_max - heatmaps[i]) / world.heat_max * 255).astype(np.uint8)  # substitute world.temp_max with 0.1 will be more apparent
         
         # Colormap
         green_colormap = np.zeros((256, 1, 3), dtype=np.uint8)  # BGR
@@ -154,7 +154,12 @@ def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, 
     return sim
 
 def main(args=None):
-    world = GridWorld(size_world=(20, 20), len_grid=1, obstacles=None)
+    size_world = (50, 50)
+    # rate = np.ones(size_world)*0.01
+    len_grid = 1
+    heatmap = np.ones(size_world) * 0.1
+    heatmap[30:40, 20:30] = 0.7
+    world = GridWorld(size_world, len_grid, heatmap, obstacles=None)
 
     Q_x = 10
     Q_y = 10
@@ -187,11 +192,11 @@ def main(args=None):
     omega_lim = [-casadi.pi/4, casadi.pi/4]
     Q = [Q_x, Q_y, Q_theta]
     R = [R_v, R_omega]
-    obs_list = [(4,0), (8,5), (6,9), (2, -4), (8,-5), (6,-9), (5, -6)]
+    obstacles = [(14,4,3), (18,15,3), (6,19,3), (29, 44,3), (38,15,3), (36,29,3), (25, 26,3)]
 
     # TODO Move the definition of obstacles to env, not in agents
     init_state = [x_0, y_0, theta_0]
-    mpc_cbf = MPC_CBF_Unicycle(0, dt,N, v_lim, omega_lim, Q, R, init_state=np.array(init_state), obstacles= obs_list, flag_cbf=True)
+    mpc_cbf = MPC_CBF_Unicycle(0, dt,N, v_lim, omega_lim, Q, R, init_state=np.array(init_state), obstacles= obstacles, flag_cbf=False)
     world.add_agents([mpc_cbf])
     state_0 = casadi.DM(init_state)
     u0 = casadi.DM.zeros((mpc_cbf.n_controls, N))
@@ -212,7 +217,7 @@ def main(args=None):
         t0, X0, u0 = mpc_cbf.shift_timestep(dt, t0, X_pred, u)
         mpc_cbf.states = X0[:, 1]
         # states_hist.append(mpc_cbf.states)
-        world.update_heatmap()
+        world.step()
         
         heatmaps.append(np.copy(world.heatmap))
         # x_arr.append(X0[0,1])

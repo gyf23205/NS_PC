@@ -13,7 +13,7 @@ from networks.gcn import GraphConvNet
 class MPC_CBF_Unicycle:
     def __init__(self, id, dt ,N, v_lim, omega_lim,  
                  Q, R, flag_cbf, init_state, 
-                 obstacles= None,  obs_diam = 3, r_d = 0.5, r_c=2.0, r_s:int=5, alpha=0.005, dev='cuda'):
+                 obstacles= None,  obs_diam = 3, r_d = 0.5, r_c=2.0, r_s=5, alpha=0.005, dev='cuda'):
         '''
         Inputs:
         dt: Scalar, computing period of the MPC solver.

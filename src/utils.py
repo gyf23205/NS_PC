@@ -18,6 +18,7 @@ def action2waypoints(actions, world_size, len_grid):
     # return np.concat([coord_x, coord_y], axis=-1)
 
 
+
 if __name__=='__main__':
       length = 15
       x = [np.random.random((3, 21, 10)), np.random.random((3, 21, 15))]
