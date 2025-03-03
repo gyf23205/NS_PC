@@ -27,6 +27,7 @@ class GridWorld(object):
         self.agent_rs = None
         self.x_coord = 0.5 * len_grid + np.repeat(np.arange(size_world[1])[None, :] * len_grid, size_world[0], axis=0)
         self.y_coord = 0.5 * len_grid + np.repeat(np.arange(size_world[0])[:, None] * len_grid, size_world[1], axis=1)
+        print()
       
     def _grid_agents_dist(self):
         dist = []
@@ -53,14 +54,16 @@ class GridWorld(object):
         grid_agent_dist = self._grid_agents_dist()
         for i, agent in enumerate(self.agents):
             # dist = np.sqrt((self.x_coord - agent.states[0])**2 + (self.y_coord - agent.states[1])**2)
-            current_grid = (int(agent.states[0] // self.len_grid + self.agent_rs), int(agent.states[1] // self.len_grid + self.agent_rs))
+            current_grid = (int((agent.states[0]+ self.agent_rs) // self.len_grid ), int((agent.states[1] + self.agent_rs) // self.len_grid))
             left, right = current_grid[0] - self.agent_rs, current_grid[0] + self.agent_rs,
             up, down = current_grid[1] - self.agent_rs, current_grid[1] + self.agent_rs
+            # print(current_grid)
+            # print((left, right, up, down))
             temp = np.copy(self.heatmap_pad)
             mask = grid_agent_dist[i] > self.agent_rs
-            mask = np.pad(mask, np.ceil(self.agents[0].r_s), constant_values=False)
+            mask = np.pad(mask, np.ceil(self.agents[0].r_s), constant_values=True)
             temp[mask] = 0
-            observations.append(temp[None, left:right, up:down])
+            observations.append(temp[None, up:down, left:right])
         return observations
 
     def step(self):

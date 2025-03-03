@@ -78,7 +78,7 @@ class MPC_CBF_Unicycle:
 
     def embed_local(self, observe):
         observe = observe.to(self.dev)
-        self.local_embed = self.decisionNN.embed_observe(observe)
+        self.local_embed = self.decisionNN.embed_observe(observe, torch.tensor(self.states, dtype=torch.float32, device=self.dev).view(1, -1))
 
     def generate_waypoints(self, observe, neighbors_observe):
         '''
@@ -87,7 +87,7 @@ class MPC_CBF_Unicycle:
         neighbors_observe: (n_neighbors, dim_embed)
         '''
         observe, neighbors_observe = torch.tensor(observe, dtype=torch.float32, device=self.dev), neighbors_observe.to(self.dev)
-        prob = self.decisionNN(observe, neighbors_observe)
+        prob = self.decisionNN(observe, neighbors_observe, torch.tensor(self.states, dtype=torch.float32, device=self.dev).view(1, -1))
         # actions = torch.multinomial(prob, 1).cpu().numpy() # Sample one destination for current time step
         # log_prob = torch.log(prob)
 
@@ -191,18 +191,18 @@ class MPC_CBF_Unicycle:
         self.solver = casadi.nlpsol('solver', 'ipopt', nlp_prob, opts)
 
 
-    def solve(self, X0, u0,  ref, idx):   
+    def solve(self, X0, u0,  ref, idx, ub, lb):   
 
         lbx = casadi.DM.zeros((self.n_states * (self.N + 1) + self.n_controls * self.N, 1))
         ubx = casadi.DM.zeros((self.n_states * (self.N + 1) + self.n_controls * self.N, 1))
 
-        lbx[0:self.n_states * (self.N + 1):self.n_states] = -casadi.inf
-        lbx[1:self.n_states * (self.N + 1):self.n_states] = -casadi.inf
-        lbx[2:self.n_states * (self.N + 1):self.n_states] = -casadi.inf
+        lbx[0:self.n_states * (self.N + 1):self.n_states] = lb[0]
+        lbx[1:self.n_states * (self.N + 1):self.n_states] = lb[1]
+        lbx[2:self.n_states * (self.N + 1):self.n_states] = lb[2]
 
-        ubx[0:self.n_states * (self.N + 1):self.n_states] = casadi.inf
-        ubx[1:self.n_states * (self.N + 1):self.n_states] = casadi.inf
-        ubx[2:self.n_states * (self.N + 1):self.n_states] = casadi.inf
+        ubx[0:self.n_states * (self.N + 1):self.n_states] = ub[0]
+        ubx[1:self.n_states * (self.N + 1):self.n_states] = ub[1]
+        ubx[2:self.n_states * (self.N + 1):self.n_states] = ub[2]
 
         lbx[self.n_states * (self.N + 1):self.n_states * (self.N + 1) + self.n_controls * self.N:self.n_controls] = self.v_lim[0]
         ubx[self.n_states * (self.N + 1):self.n_states * (self.N + 1) + self.n_controls * self.N:self.n_controls] = self.v_lim[1]

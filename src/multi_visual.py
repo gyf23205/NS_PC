@@ -110,10 +110,13 @@ def simulate(world, n_agents, cat_states_list, heatmaps, cov_lvls, obstacles, nu
 
     # create figure and axes
     fig, ax = plt.subplots(1, 2, figsize=(6, 6))
+    fig.set_size_inches(19.2, 10.8)
     size_world = world.heatmap.shape
     min_scale = 0
-    ax[0].set_xlim(left = min_scale, right = world.len_grid * size_world[0])
-    ax[0].set_ylim(bottom = min_scale, top = world.len_grid * size_world[1])
+    ax[0].set_xlim(left = min_scale, right = world.len_grid * size_world[1])
+    ax[0].set_ylim(bottom = world.len_grid * size_world[0], top = min_scale)
+    ax[1].set_xlim(left = min_scale, right = world.len_grid * size_world[1])
+    ax[1].set_ylim(bottom = world.len_grid * size_world[0], top = min_scale)
 
     # Obstacles
     for (ox, oy, obsr) in obstacles:
@@ -242,10 +245,12 @@ def main(args=None):
     trip_lens = [len(ref_states) for ref_states in ref_states_list]
     longest_trip = np.max(trip_lens)
     print('Computing MPC trajectories...')
+    lb = [-casadi.inf, -casadi.inf, -casadi.inf]
+    ub = [casadi.inf, casadi.inf, casadi.inf]
     for i in range(longest_trip):
         for j in range(n_agents):
             if i < len(ref_states_list[j]):
-                u, X_pred = agents[j].solve(X0_list[j], u0_list[j], ref_states_list[j], i)
+                u, X_pred = agents[j].solve(X0_list[j], u0_list[j], ref_states_list[j], i, ub, lb)
             
                 cat_states_list[j] = np.dstack((cat_states_list[j], dm_to_array(X_pred)))
                 cat_controls_list[j] = np.dstack((cat_controls_list[j], dm_to_array(u[:, 0])))
