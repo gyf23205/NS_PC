@@ -57,13 +57,14 @@ class GridWorld(object):
             current_grid = (int((agent.states[0]+ self.agent_rs) // self.len_grid ), int((agent.states[1] + self.agent_rs) // self.len_grid))
             left, right = current_grid[0] - self.agent_rs, current_grid[0] + self.agent_rs,
             up, down = current_grid[1] - self.agent_rs, current_grid[1] + self.agent_rs
-            # print(current_grid)
-            # print((left, right, up, down))
+            print(current_grid)
+            print((left, right, up, down))
             temp = np.copy(self.heatmap_pad)
             mask = grid_agent_dist[i] > self.agent_rs
             mask = np.pad(mask, np.ceil(self.agents[0].r_s), constant_values=True)
             temp[mask] = 0
             observations.append(temp[None, up:down, left:right])
+            # observations.append(np.ones((1,6,6))*0.1*i)
         return observations
 
     def step(self):

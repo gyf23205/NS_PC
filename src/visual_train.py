@@ -5,14 +5,14 @@ from multi_visual import simulate
 
 
 if __name__=='__main__':
-    size_world = (50, 50)
+    size_world = (30, 30)
     len_grid = 1
     heatmap = np.ones(size_world) * 0.1
-    heatmap[20:40, 25:45] = 0.6
+    heatmap[20:40, 25:45] = 0.8
     world = GridWorld(size_world, len_grid, heatmap, obstacles=None)
-    n_agents = 10
+    n_agents = 5
     epochs = 300
-    affix = f'agent{n_agents}_epoch{epochs}_corner'
+    affix = f'agent{n_agents}_epoch{epochs}_rand'
     
     
     with open(f'./results/traj_log/train_traj_' + affix + '.pkl', 'rb') as f:

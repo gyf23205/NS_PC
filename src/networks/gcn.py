@@ -43,9 +43,12 @@ class GCNPos(nn.Module):
         self.dim_map = size_world[0] * size_world[1]
         self.dim_embed = n_embed_channel * ((dim_observe - size_kernal) + 1)**2 # dim_out of CNN = (dim_in - size_kernal + padding) / stride + 1
         self.encoder = nn.Conv2d(1, n_embed_channel, size_kernal)
-        self.linear = nn.Linear(self.dim_embed + 3, 512) # 3 extra extries represent the position and orientaion of the agent. 512 comes from "Attention is all you need".
+        self.pos_embed = nn.Linear(3, 16)
+        self.linear = nn.Linear(self.dim_embed + 16, 512) # 3 extra extries represent the position and orientaion of the agent. 512 comes from "Attention is all you need".
         self.relations = nn.ModuleList([nn.MultiheadAttention(512, n_head) for _ in range(n_rel)])
-        self.ffs = nn.ModuleList([nn.Linear(512, 512) for _ in range(n_rel)])
+        self.layernorms = nn.ModuleList([nn.LayerNorm(512) for _ in range(2*n_rel)])
+        self.ffs1 = nn.ModuleList([nn.Linear(512, 512) for _ in range(n_rel)])
+        self.ffs2 = nn.ModuleList([nn.Linear(512, 512) for _ in range(n_rel)])
         self.out = nn.Linear(512, self.dim_map)
 
 
@@ -62,13 +65,19 @@ class GCNPos(nn.Module):
             print(x.shape)
         x = self.encoder(x)
         x = x.view(1, self.dim_embed)
+        pos = self.pos_embed(pos)
         x = torch.cat([x, pos], dim=-1)
         x = F.relu(self.linear(x))
         for i in range(self.n_rel):
+            res1 = x
             x, _ = self.relations[i](x, neighbors, neighbors)
-            x = F.relu(self.ffs[i](x))
-            # Compared with transformer, no normalization here.
-            out = torch.squeeze(self.out(x))
+            x = x + res1
+            x = self.layernorms[i](x)
+            res2 = x
+            x = self.ffs2[i](F.relu(self.ffs1[i](x)))
+            x = x + res2
+            x = self.layernorms[i+self.n_rel](x)
+        out = torch.squeeze(self.out(x))
         return F.softmax(out, dim=0)
     
     def embed_observe(self, x, pos):
@@ -79,6 +88,38 @@ class GCNPos(nn.Module):
                 print(x.shape)
             x = self.encoder(x)
             x = x.view(1, self.dim_embed)
+            pos = self.pos_embed(pos)
             x = torch.cat([x, pos], dim=-1)
             x = F.relu(self.linear(x))
         return x
+    
+
+class NetTest(nn.Module):
+    def __init__(self, n_embed_channel, size_kernal, dim_observe, size_world, n_rel, n_head=8):
+        super().__init__()
+        self.dim_map = size_world[0] * size_world[1]
+        self.linear1 = nn.Linear(36, 128)
+        self.pos_linear1 = nn.Linear(3, 128)
+        self.pos_linear2 = nn.Linear(128, 256)
+        self.out = nn.Linear(256, self.dim_map)
+
+    def forward(self, x, neighbors, pos):
+        pos = self.pos_linear1(pos)
+        pos = F.relu(pos)
+        pos = self.pos_linear2(pos)
+        pos = F.relu(pos)
+        # x = self.linear1(x.view(1, 36))
+        # x = F.relu(x)
+        # x = torch.cat([x, pos], dim=-1)
+        out = torch.squeeze(self.out(pos))
+        prob = F.softmax(out, dim=0)
+        # idx = torch.argmax(prob)
+        # eps = (prob[idx] * 0.5)/2499
+        # prob[idx] = prob[idx] * 0.5
+        # prob[0:idx] = prob[0:idx] + eps
+        # prob[idx+1:] = prob[idx+1:] + eps
+        # print(torch.max(prob))
+        return prob
+    
+    def embed_observe(self, x, pos):
+        return  torch.rand((1, 512))

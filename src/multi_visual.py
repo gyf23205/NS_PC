@@ -114,8 +114,12 @@ def simulate(world, n_agents, cat_states_list, heatmaps, cov_lvls, obstacles, nu
     size_world = world.heatmap.shape
     min_scale = 0
     ax[0].set_xlim(left = min_scale, right = world.len_grid * size_world[1])
+    ax[0].xaxis.tick_top()
+    ax[0].xaxis.set_label_position('top')
     ax[0].set_ylim(bottom = world.len_grid * size_world[0], top = min_scale)
     ax[1].set_xlim(left = min_scale, right = world.len_grid * size_world[1])
+    ax[1].xaxis.tick_top()
+    ax[1].xaxis.set_label_position('top')
     ax[1].set_ylim(bottom = world.len_grid * size_world[0], top = min_scale)
 
     # Obstacles
@@ -213,7 +217,7 @@ def main(args=None):
     n_agents = 3
     n_targets = 2
     # xy_goals = np.random.rand(n_agents, n_targets, 2)
-    xy_goals = np.array([[[5, 45], [20, 10]], [[10, 10], [45, 5]], [[45, 30], [15, 45]]], dtype=np.float32) / 50
+    xy_goals = np.array([[[5, 45], [20, 20]], [[10, 10], [20, 20]], [[30, 30], [20, 20]]], dtype=np.float32) / 50
     # xy_goals = np.array([[[5, 45], [20, 10]], [[10, 10], [45, 5]], [[45, 45], [15, 45]]], dtype=np.float32)
     xy_goals[:, :, 0] = xy_goals[:, :, 0] * size_world[0] * len_grid
     xy_goals[:, :, 1] = xy_goals[:, :, 1] * size_world[1] * len_grid

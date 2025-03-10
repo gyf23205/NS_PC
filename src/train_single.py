@@ -6,19 +6,20 @@ import numpy as np
 import hypers
 from utils import action2waypoints
 from env import GridWorld
-from networks.gcn import GraphConvNet, GCNPos
+from networks.gcn import GraphConvNet, GCNPos, NetTest
 from mpc_cbf.robot_unicycle import MPC_CBF_Unicycle
 from mpc_cbf.plan_dubins import plan_dubins_path
 from utils import dm_to_array
 from torch.utils.tensorboard import SummaryWriter
 
 def compute_gradient_norm(model, norm_type=2):
-    total_norm = 0.0
-    for param in model.parameters():
-        if param.grad is not None:
-            param_norm = param.grad.norm(norm_type)
-            total_norm += param_norm.item() ** norm_type
-    total_norm = total_norm ** (1.0 / norm_type)
+    with torch.no_grad():
+        total_norm = 0.0
+        for param in model.parameters():
+            if param.grad is not None:
+                param_norm = param.grad.norm(norm_type)
+                total_norm += param_norm.item() ** norm_type
+        total_norm = total_norm ** (1.0 / norm_type)
     return total_norm
 
 def train(world, optim):
@@ -29,25 +30,29 @@ def train(world, optim):
     agents = world.agents
     observations = world.check()
     dists = world.agents_dist()
-    n_inner = 5
+    n_inner = 10
     log_probs = []
     ref_states = []
-    ub = [size_world[1] * len_grid - 0.1, size_world[0] * len_grid - 0.1, casadi.inf]
-    lb = [0, 0, 0]
+    # ub = [size_world[1] * len_grid - 0.1, size_world[0] * len_grid - 0.1, casadi.inf]
+    # lb = [0, 0, 0]
+    lb = [-casadi.inf, -casadi.inf, -casadi.inf]
+    ub = [casadi.inf, casadi.inf, casadi.inf]
 
     # Each agent gets local observations
     for i in range(n_agents):
         agents[i].update_neighbors(dists[i, :])
         agents[i].embed_local(torch.tensor(observations[i], dtype=torch.float32))
 
+    ref_states_list = []
     for i in range(n_agents):
         # Get new waypoints
         neighbor_embed = [agents[j].local_embed for j in agents[i].neighbors]    
         actions, log_prob = agents[i].generate_waypoints(observations[i], torch.cat(neighbor_embed, dim=0))
         log_probs.append(log_prob)
         xy_goals = action2waypoints(actions, size_world, len_grid)
-        print(xy_goals)
-        theta_goals = np.random.rand(1) * np.pi - np.pi # Randomly generating theta goal for now.
+        # xy_goals = np.array([20., 20.])
+        # print(xy_goals)
+        theta_goals =  np.array([np.pi/2])#np.random.rand(1) * np.pi - np.pi # Randomly generating theta goal for now.
         state_goal = np.concat((xy_goals, theta_goals), axis=-1)
 
         # Generating ref trajectory
@@ -58,24 +63,24 @@ def train(world, optim):
 
     cost_agent_list = []
     cost_world_list = []
-    n_inner = np.min([n_inner, len(ref_states[i])])
+    u0_list = [casadi.DM.zeros((agents[i].n_controls, N)) for i in range(n_agents)]
+    X0_list = [casadi.repmat(agents[i].states, 1, N + 1) for i in range(n_agents)]
+    t0_list = [0 for i in range(n_agents)]
+    # n_inner = np.min([n_inner, len(ref_states[i])])
     for k in range(n_inner): # Multiply MPC steps for each training step
         for i in range(n_agents):
             # Generating MPC trajectory
-            u0 = casadi.DM.zeros((agents[i].n_controls, N))
-            X0 = casadi.repmat(agents[i].states, 1, N + 1)
-            t0 = 0
             # cost_agent = []
-            u, X_pred = agents[i].solve(X0, u0, ref_states[i], k, ub, lb)
-            t0, X0, u0 = agents[i].shift_timestep(dt, t0, X_pred, u)
-            agents[i].states = X0[:, 0]
+            u, X_pred = agents[i].solve(X0_list[i], u0_list[i], ref_states[i], k, ub, lb)
+            t0_list[i], X0_list[i], u0_list[i] = agents[i].shift_timestep(dt, t0_list[i], X_pred, u)
+            agents[i].states = X0_list[i][:, 1]
             # print(agents[i].states)
-            if agents[i].states[0] <= size_world[0] and agents[i].states[1] <= size_world[1]:
-                pass
-            else:
-                print(X0)
-                print(agents[i].states)
-                assert agents[i].states[0] <= size_world[0] and agents[i].states[1] <= size_world[1]
+            # if agents[i].states[0] <= size_world[0] and agents[i].states[1] <= size_world[1]:
+            #     pass
+            # else:
+            #     print(X0)
+            #     print(agents[i].states)
+            #     assert agents[i].states[0] <= size_world[0] and agents[i].states[1] <= size_world[1]
 
             # Log for visualization
             cat_states_list[i] = np.dstack((cat_states_list[i], dm_to_array(X_pred)))
@@ -121,17 +126,17 @@ if __name__=='__main__':
     os.environ['PYTHONHASHSEED'] = str(seed)
 
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
-    n_agents = 10
-    epochs =300
+    n_agents = 5
+    epochs = 50
     hypers.init([5, 5, 0.1])
-    size_world = (50, 50)
+    size_world = (30, 30)
     len_grid = 1
-    heatmap = np.ones(size_world) * 0.1
-    heatmap[20:40, 25:45] = 0.6 # * np.random.uniform(0, 1, (20, 20))
+    heatmap = np.random.uniform(0.1, 0.5, size_world)
+    heatmap[10:15, 5:10] = 0.8 # * np.random.uniform(0, 1, (20, 20))
     # upper_bound = np.mean(heatmap)
     # upper_bound = torch.tensor(upper_bound, dtype=torch.float32, device=dev)
     world = GridWorld(size_world, len_grid, heatmap, obstacles=None)
-    affix = f'agent{n_agents}_epoch{epochs}_corner'
+    affix = f'agent{n_agents}_epoch{epochs}_rand'
     writer = SummaryWriter(log_dir='runs/overfitting/' + affix)
     # # Define hyperparameters
     # hparams = {
@@ -147,7 +152,7 @@ if __name__=='__main__':
     R_v = 0.5
     R_omega = 0.01
     r_s = 3
-    r_c = 10
+    r_c = 50
 
     dt = 0.1
     N = 20
@@ -164,10 +169,11 @@ if __name__=='__main__':
     save = True
 
     # TODO Move the definition of obstacles to env, not in agents. Agents must be able to detect obstacles on the run.
-    xy_init = np.random.uniform(0., 50, (n_agents, 2))
+    x_init = np.random.uniform(0., size_world[0], (n_agents, 1))
+    y_init = np.random.uniform(0., size_world[1], (n_agents, 1))
     # xy_init[0, :] = np.array([25, 25])
     theta_init= np.random.rand(n_agents, 1)
-    state_init = np.concat((xy_init, theta_init), axis=-1)
+    state_init = np.concat((x_init, y_init, theta_init), axis=-1)
     # t0_list = [0 for i in range(n_agents)]
     agents = [MPC_CBF_Unicycle(i, dt, N, v_lim, omega_lim, Q, R, init_state=state_init[i], obstacles = obstacles, flag_cbf=True, r_s=r_s, r_c=r_c) for i in range(n_agents)]
     # decisionNN = GraphConvNet(hypers.n_embed_channel, size_kernal=3, dim_observe=2*r_s, size_world=size_world, n_rel=hypers.n_rel, n_head=4).to(dev)
