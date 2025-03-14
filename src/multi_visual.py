@@ -249,8 +249,10 @@ def main(args=None):
     trip_lens = [len(ref_states) for ref_states in ref_states_list]
     longest_trip = np.max(trip_lens)
     print('Computing MPC trajectories...')
-    lb = [-casadi.inf, -casadi.inf, -casadi.inf]
-    ub = [casadi.inf, casadi.inf, casadi.inf]
+    ub = [size_world[1] * len_grid - 0.1, size_world[0] * len_grid - 0.1, casadi.inf]
+    lb = [0, 0, -casadi.inf]
+    # lb = [-casadi.inf, -casadi.inf, -casadi.inf]
+    # ub = [casadi.inf, casadi.inf, casadi.inf]
     for i in range(longest_trip):
         for j in range(n_agents):
             if i < len(ref_states_list[j]):

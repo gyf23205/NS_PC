@@ -57,8 +57,8 @@ class GridWorld(object):
             current_grid = (int((agent.states[0]+ self.agent_rs) // self.len_grid ), int((agent.states[1] + self.agent_rs) // self.len_grid))
             left, right = current_grid[0] - self.agent_rs, current_grid[0] + self.agent_rs,
             up, down = current_grid[1] - self.agent_rs, current_grid[1] + self.agent_rs
-            print(current_grid)
-            print((left, right, up, down))
+            # print(current_grid)
+            # print((left, right, up, down))
             temp = np.copy(self.heatmap_pad)
             mask = grid_agent_dist[i] > self.agent_rs
             mask = np.pad(mask, np.ceil(self.agents[0].r_s), constant_values=True)
@@ -95,8 +95,12 @@ class GridWorld(object):
         '''
         return np.max(self.heatmap * (self.cov_max - self.cov_lvl))
     
-    def get_cost_mean(self):
-        return -np.mean(self.heatmap * self.cov_lvl)
+    def get_cost_mean(self,thre):
+        if np.mean(self.heatmap * self.cov_lvl) > thre:
+            return -1
+        else:
+            return 0
+        # return -np.mean(self.heatmap * self.cov_lvl)
     
     # def get_cost_avg(self):
     #     '''

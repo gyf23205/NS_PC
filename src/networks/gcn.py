@@ -42,14 +42,14 @@ class GCNPos(nn.Module):
         self.n_rel = n_rel
         self.dim_map = size_world[0] * size_world[1]
         self.dim_embed = n_embed_channel * ((dim_observe - size_kernal) + 1)**2 # dim_out of CNN = (dim_in - size_kernal + padding) / stride + 1
-        self.encoder = nn.Conv2d(1, n_embed_channel, size_kernal)
-        self.pos_embed = nn.Linear(3, 16)
-        self.linear = nn.Linear(self.dim_embed + 16, 512) # 3 extra extries represent the position and orientaion of the agent. 512 comes from "Attention is all you need".
-        self.relations = nn.ModuleList([nn.MultiheadAttention(512, n_head) for _ in range(n_rel)])
+        self.encoder = nn.Conv2d(1, n_embed_channel, size_kernal, bias=False)
+        self.pos_embed = nn.Linear(3, 16, bias=False)
+        self.linear = nn.Linear(self.dim_embed + 16, 512, bias=False) # 3 extra extries represent the position and orientaion of the agent. 512 comes from "Attention is all you need".
+        self.relations = nn.ModuleList([nn.MultiheadAttention(512, n_head, bias=False) for _ in range(n_rel)])
         self.layernorms = nn.ModuleList([nn.LayerNorm(512) for _ in range(2*n_rel)])
-        self.ffs1 = nn.ModuleList([nn.Linear(512, 512) for _ in range(n_rel)])
-        self.ffs2 = nn.ModuleList([nn.Linear(512, 512) for _ in range(n_rel)])
-        self.out = nn.Linear(512, self.dim_map)
+        self.ffs1 = nn.ModuleList([nn.Linear(512, 512, bias=False) for _ in range(n_rel)])
+        self.ffs2 = nn.ModuleList([nn.Linear(512, 512, bias=False) for _ in range(n_rel)])
+        self.out = nn.Linear(512, self.dim_map, bias=False)
 
 
     def forward(self, x, neighbors, pos):

@@ -30,13 +30,13 @@ def train(world, optim):
     agents = world.agents
     observations = world.check()
     dists = world.agents_dist()
-    n_inner = 10
+    n_inner = 20
     log_probs = []
     ref_states = []
-    # ub = [size_world[1] * len_grid - 0.1, size_world[0] * len_grid - 0.1, casadi.inf]
-    # lb = [0, 0, 0]
-    lb = [-casadi.inf, -casadi.inf, -casadi.inf]
-    ub = [casadi.inf, casadi.inf, casadi.inf]
+    ub = [size_world[1] * len_grid - 0.1, size_world[0] * len_grid - 0.1, casadi.inf]
+    lb = [0, 0, -casadi.inf]
+    # lb = [-casadi.inf, -casadi.inf, -casadi.inf]
+    # ub = [casadi.inf, casadi.inf, casadi.inf]
 
     # Each agent gets local observations
     for i in range(n_agents):
@@ -51,7 +51,7 @@ def train(world, optim):
         log_probs.append(log_prob)
         xy_goals = action2waypoints(actions, size_world, len_grid)
         # xy_goals = np.array([20., 20.])
-        # print(xy_goals)
+        print(xy_goals)
         theta_goals =  np.array([np.pi/2])#np.random.rand(1) * np.pi - np.pi # Randomly generating theta goal for now.
         state_goal = np.concat((xy_goals, theta_goals), axis=-1)
 
@@ -74,6 +74,7 @@ def train(world, optim):
             u, X_pred = agents[i].solve(X0_list[i], u0_list[i], ref_states[i], k, ub, lb)
             t0_list[i], X0_list[i], u0_list[i] = agents[i].shift_timestep(dt, t0_list[i], X_pred, u)
             agents[i].states = X0_list[i][:, 1]
+            cost_agent_list.append(world.get_agent_cost(agents[i].id))
             # print(agents[i].states)
             # if agents[i].states[0] <= size_world[0] and agents[i].states[1] <= size_world[1]:
             #     pass
@@ -88,27 +89,29 @@ def train(world, optim):
             # cost_agent.append(torch.tensor(world.get_agent_cost(agents[i].id)))
 
         world.step()
-        cost_world_list.append(torch.tensor(world.get_cost_mean()))
+        cost_world_list.append(torch.tensor(world.get_cost_mean(thre=thre)))
         # cost_world_list.append(torch.tensor(world.get_cost_max()))
         heatmaps.append(np.copy(world.heatmap))
         cov_lvls.append(np.copy(world.cov_lvl))
 
-    cost_agents = torch.zeros((n_agents,), device=dev) # No costs of individual agent now
+    # cost_agents = torch.tensor(cost_agent_list, device=dev)
+    cost_agents = 0
     cost_world = torch.sum(torch.tensor(cost_world_list).to(dev))
-    cost = cost_agents + cost_world
+    # cost_world = 0
+    cost = (cost_agents + cost_world).sum()
     # loss = torch.matmul(torch.stack(log_probs), cost)
-    loss = torch.stack(log_probs).sum() * cost.sum()
+    loss = torch.stack(log_probs).sum() * cost
     optim.zero_grad()
     loss.backward()
     optim.step()
     grad_norm = compute_gradient_norm(decisionNN)
 
-    print("Cost world:%.3f"%cost_world.detach().cpu().numpy())
+    print("Cost:%.3f"%cost.detach().cpu().numpy())
     print('loss: %.3f'%loss.detach().cpu().numpy())
     print('Gradient norm: %.3f'%grad_norm)
     print()
     
-    writer.add_scalar("Cost/world", cost_world.detach().cpu().numpy(), epoch)
+    writer.add_scalar("Cost/cost", cost.detach().cpu().numpy(), epoch)
     # writer.add_scalar("Cost/agent", np.mean(cost_agent_list), epoch)
     writer.add_scalar("Loss/train", loss.detach().cpu().numpy(), epoch)
     writer.add_scalar('Norm/grad', grad_norm)
@@ -126,18 +129,21 @@ if __name__=='__main__':
     os.environ['PYTHONHASHSEED'] = str(seed)
 
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
-    n_agents = 5
-    epochs = 50
+    n_agents = 8
+    epochs = 500
     hypers.init([5, 5, 0.1])
     size_world = (30, 30)
     len_grid = 1
-    heatmap = np.random.uniform(0.1, 0.5, size_world)
-    heatmap[10:15, 5:10] = 0.8 # * np.random.uniform(0, 1, (20, 20))
+    # heatmap = np.random.uniform(0.1, 0.5, size_world)
+    heatmap = np.ones(size_world) * 0.1
+    heatmap[10:15, 15:20] = 0.8 # * np.random.uniform(0, 1, (20, 20))
     # upper_bound = np.mean(heatmap)
     # upper_bound = torch.tensor(upper_bound, dtype=torch.float32, device=dev)
     world = GridWorld(size_world, len_grid, heatmap, obstacles=None)
     affix = f'agent{n_agents}_epoch{epochs}_rand'
     writer = SummaryWriter(log_dir='runs/overfitting/' + affix)
+    thre = np.mean(heatmap * 0.6)
+    lr = 1e-3
     # # Define hyperparameters
     # hparams = {
     #     "learning_rate": 0.01,
@@ -164,7 +170,7 @@ if __name__=='__main__':
     omega_lim = [-casadi.pi/4, casadi.pi/4]
     Q = [Q_x, Q_y, Q_theta]
     R = [R_v, R_omega]
-    obstacles = [(14,4,3), (18,15,3), (6,19,3), (29, 44,3), (38,15,3), (36,29,3), (25, 26,3)]
+    obstacles = [(14,4,0), (18,15,0), (6,19,0), (29, 44,0), (38,15,0), (36,29,0), (25, 26,0)]
 
     save = True
 
@@ -182,7 +188,7 @@ if __name__=='__main__':
         # During the training time, all the agents share the same decision network. Modify this configuration can achieve distributed learning.
         agents[i].decisionNN = decisionNN
     world.add_agents(agents)
-    optim = torch.optim.Adam(decisionNN.parameters())
+    optim = torch.optim.Adam(decisionNN.parameters(), lr=lr)
     decisionNN.train()
     # Data for visualization
     cat_states_list = [np.tile(agents[i].states[..., None], (1, N+1)) for i in range(n_agents)]
