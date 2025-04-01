@@ -4,9 +4,9 @@ import casadi
 import torch
 import numpy as np
 import hypers
-from utils import action2waypoints
+from utils import action2waypoints_local
 from env import GridWorld
-from networks.gcn import GraphConvNet, GCNPos, NetTest
+from networks.gcn import GraphConvNet, GCNPos, NetTest, GCNPosOnly
 from mpc_cbf.robot_unicycle import MPC_CBF_Unicycle
 from mpc_cbf.plan_dubins import plan_dubins_path
 from utils import dm_to_array
@@ -48,15 +48,11 @@ def train(world, optim):
         neighbor_embed = [agents[j].local_embed for j in agents[i].neighbors]    
         actions, log_prob = agents[i].generate_waypoints(observations[i], torch.cat(neighbor_embed, dim=0))
         log_probs.append(log_prob)
-        xy_goals = action2waypoints(actions, size_world, len_grid)
+        xy_goals = action2waypoints_local(actions, size_world, len_grid, agents[i].states)
         # xy_goals = np.array([20., 20.])
-        print(xy_goals)
-        dx = xy_goals[0] - agents[i].states[0]
-        dy = xy_goals[1] - agents[i].states[1]
-        theta_goal = np.degrees(np.atan2(dy, dx))[None, ...]
-        
-        # theta_goals = np.array([theta])
-        state_goal = np.concat((xy_goals, theta_goal), axis=-1)
+        # print(xy_goals)
+        theta_goals =  np.array([np.pi/2])#np.random.rand(1) * np.pi - np.pi # Randomly generating theta goal for now.
+        state_goal = np.concat((xy_goals, theta_goals), axis=-1)
 
         # Generating ref trajectory
         path_x, path_y, path_yaw, _, _ = plan_dubins_path(agents[i].states[0], agents[i].states[1], agents[i].states[2],
@@ -97,7 +93,7 @@ def train(world, optim):
 
     cost_agents = torch.tensor(cost_agent_list, device=dev).sum(1)
     cost_world = torch.sum(torch.tensor(cost_world_list).to(dev))
-    cost_world = 0
+    # cost_world = 0
     cost = cost_agents + cost_world
     # loss = torch.matmul(torch.stack(log_probs), cost)
     loss = (torch.stack(log_probs) * cost).sum()
@@ -129,7 +125,7 @@ if __name__=='__main__':
     os.environ['PYTHONHASHSEED'] = str(seed)
 
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
-    n_agents = 3
+    n_agents = 8
     epochs = 100
     n_inner = 20
     hypers.init([5, 5, 0.1])
@@ -184,12 +180,12 @@ if __name__=='__main__':
     # t0_list = [0 for i in range(n_agents)]
     agents = [MPC_CBF_Unicycle(i, dt, N, v_lim, omega_lim, Q, R, init_state=state_init[i], obstacles = obstacles, flag_cbf=True, r_s=r_s, r_c=r_c) for i in range(n_agents)]
     # decisionNN = GraphConvNet(hypers.n_embed_channel, size_kernal=3, dim_observe=2*r_s, size_world=size_world, n_rel=hypers.n_rel, n_head=4).to(dev)
-    decisionNN = GCNPos(hypers.n_embed_channel, size_kernal=3, dim_observe=2*r_s, size_world=size_world, n_rel=hypers.n_rel, n_head=4).to(dev)
+    decisionNN = GCNPosOnly(hypers.n_embed_channel, size_kernal=3, dim_observe=2*r_s, size_world=size_world, n_rel=hypers.n_rel, n_head=4).to(dev)
     for i in range(n_agents):
         # During the training time, all the agents share the same decision network. Modify this configuration can achieve distributed learning.
         agents[i].decisionNN = decisionNN
     world.add_agents(agents)
-    optim = torch.optim.Adam(decisionNN.parameters(), lr=lr)
+    optim = torch.optim.Adam(decisionNN.parameters(), lr=lr, weight_decay=0.1)
     decisionNN.train()
     # Data for visualization
     cat_states_list = [np.tile(agents[i].states[..., None], (1, N+1)) for i in range(n_agents)]

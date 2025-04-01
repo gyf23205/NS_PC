@@ -17,6 +17,21 @@ def action2waypoints(actions, world_size, len_grid):
     return np.array([coord_x, coord_y])
     # return np.concat([coord_x, coord_y], axis=-1)
 
+def regulate_coord(coord, cmin, cmax):
+     coord = np.min([coord, cmax])
+     coord = np.max([coord, cmin])
+     return coord
+
+def action2waypoints_local(actions, world_size, len_grid, current_pos):
+    # n_col = world_size[1]
+    row = actions // 6 - 3
+    col = actions % 6 - 3
+    coord_x = current_pos[0] + col * len_grid
+    coord_x = regulate_coord(coord_x, 0, world_size[0] * len_grid)
+    coord_y = current_pos[1] + row * len_grid
+    coord_y = regulate_coord(coord_y, 0, world_size[1] * len_grid)
+    return np.array([coord_x, coord_y])
+
 
 
 if __name__=='__main__':

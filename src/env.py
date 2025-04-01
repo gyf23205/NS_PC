@@ -96,11 +96,11 @@ class GridWorld(object):
         return np.max(self.heatmap * (self.cov_max - self.cov_lvl))
     
     def get_cost_mean(self,thre):
-        if np.mean(self.heatmap * self.cov_lvl) > thre:
-            return -1
-        else:
-            return 0
-        # return -np.mean(self.heatmap * self.cov_lvl)
+        # if np.mean(self.heatmap * self.cov_lvl) > thre:
+        #     return -1
+        # else:
+        #     return 0
+        return -np.mean(self.heatmap * self.cov_lvl)
     
     # def get_cost_avg(self):
     #     '''

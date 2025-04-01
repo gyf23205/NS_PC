@@ -90,7 +90,26 @@ class MPC_CBF_Unicycle:
         prob = self.decisionNN(observe, neighbors_observe, torch.tensor(self.states, dtype=torch.float32, device=self.dev).view(1, -1))
         # actions = torch.multinomial(prob, 1).cpu().numpy() # Sample one destination for current time step
         # log_prob = torch.log(prob)
+        print(torch.argmax(prob))
+        dist = Categorical(prob)
+        action = dist.sample()
+        log_prob = dist.log_prob(action)
 
+        return action.cpu().numpy(), log_prob
+
+    def generate_waypoints_centralized(self, heatmap, cov_lvl):
+        '''
+        Generate waypoints given local observation and neighbors' embeded information
+        observe: (1, dim_map, dim_map)
+        neighbors_observe: (n_neighbors, dim_embed)
+        '''
+        # observe, neighbors_observe = torch.tensor(observe, dtype=torch.float32, device=self.dev), neighbors_observe.to(self.dev)
+        heatmap = torch.tensor(heatmap, dtype=torch.float32, device=self.dev)
+        cov_lvl = torch.tensor(cov_lvl, dtype=torch.float32, device=self.dev)
+        prob = self.decisionNN(heatmap, cov_lvl, torch.tensor(self.states, dtype=torch.float32, device=self.dev).view(1, -1))
+        # actions = torch.multinomial(prob, 1).cpu().numpy() # Sample one destination for current time step
+        # log_prob = torch.log(prob)
+        print(torch.argmax(prob))
         dist = Categorical(prob)
         action = dist.sample()
         log_prob = dist.log_prob(action)
