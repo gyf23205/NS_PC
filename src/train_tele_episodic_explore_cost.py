@@ -1,16 +1,20 @@
 import os
+import math
 import pickle
 import casadi
 import torch
+import torch.nn as nn
 import numpy as np
 import hypers
 from utils import action2waypoints
 from env import GridWorld
-from networks.gcn import GraphConvNet, GCNPos, NetTest
+from networks.gcn import GraphConvNet, GCNPos, NetTest, GCNPosOnly, NetTest1
 from mpc_cbf.robot_unicycle import MPC_CBF_Unicycle
 from mpc_cbf.plan_dubins import plan_dubins_path
 from utils import dm_to_array
 from torch.utils.tensorboard import SummaryWriter
+
+
 
 def compute_gradient_norm(model, norm_type=2):
     with torch.no_grad():
@@ -31,9 +35,11 @@ def train(world, optim):
     observations = world.check()
     dists = world.agents_dist()
     log_probs = []
-    ref_states = []
-    ub = [size_world[1] * len_grid - 0.1, size_world[0] * len_grid - 0.1, casadi.inf]
-    lb = [0, 0, -casadi.inf]
+    probs_all = []
+    costs = []
+    # ref_states = []
+    # ub = [size_world[1] * len_grid - 0.1, size_world[0] * len_grid - 0.1, casadi.inf]
+    # lb = [0, 0, -casadi.inf]
     # lb = [-casadi.inf, -casadi.inf, -casadi.inf]
     # ub = [casadi.inf, casadi.inf, casadi.inf]
 
@@ -42,78 +48,73 @@ def train(world, optim):
         agents[i].update_neighbors(dists[i, :])
         agents[i].embed_local(torch.tensor(observations[i], dtype=torch.float32), size_world, len_grid)
 
-    ref_states_list = []
+    # ref_states_list = []
+    one_explore_steps_xytheta_goals = np.zeros([n_agents, 3])
     for i in range(n_agents):
         # Get new waypoints
         neighbor_embed = [agents[j].local_embed for j in agents[i].neighbors]    
-        actions, log_prob = agents[i].generate_waypoints(observations[i], torch.cat(neighbor_embed, dim=0), size_world, len_grid)
+        actions, log_prob, probs = agents[i].generate_waypoints(observations[i], torch.cat(neighbor_embed, dim=0), size_world, len_grid)
         log_probs.append(log_prob)
+        probs_all.append(probs)
         xy_goals = action2waypoints(actions, size_world, len_grid)
         # xy_goals = np.array([20., 20.])
-        print(xy_goals)
+        # print(xy_goals)
         dx = xy_goals[0] - agents[i].states[0]
         dy = xy_goals[1] - agents[i].states[1]
-        theta_goal = np.degrees(np.atan2(dy, dx))[None, ...]
+        theta = math.degrees(math.atan2(dy, dx))
         
-        # theta_goals = np.array([theta])
-        state_goal = np.concat((xy_goals, theta_goal), axis=-1)
+        theta_goals = np.array([theta])
+        # theta_goals =  np.array([np.pi/2])#np.random.rand(1) * np.pi - np.pi # Randomly generating theta goal for now.
+        state_goal = np.concat((xy_goals, theta_goals), axis=-1)
+        one_explore_steps_xytheta_goals[i] = state_goal
 
-        # Generating ref trajectory
-        path_x, path_y, path_yaw, _, _ = plan_dubins_path(agents[i].states[0], agents[i].states[1], agents[i].states[2],
-                                                        state_goal[0], state_goal[1], state_goal[2], r, step_size=v*dt)
-        ref_states.append(np.array([path_x, path_y, path_yaw]).T)
+        # # Generating ref trajectory
+        # path_x, path_y, path_yaw, _, _ = plan_dubins_path(agents[i].states[0], agents[i].states[1], agents[i].states[2],
+        #                                                 state_goal[0], state_goal[1], state_goal[2], r, step_size=v*dt)
+        # ref_states.append(np.array([path_x, path_y, path_yaw]).T)
+        # cat_states_list[i] = np.dstack((cat_states_list[i], state_goal.reshape(-1, 1)))
+    probs_all = torch.stack(probs_all, dim=0)
 
-
-    cost_agent_list = [[] for _ in range(n_agents)]
+    cost_agent_list = []
     cost_world_list = []
-    u0_list = [casadi.DM.zeros((agents[i].n_controls, N)) for i in range(n_agents)]
-    X0_list = [casadi.repmat(agents[i].states, 1, N + 1) for i in range(n_agents)]
-    t0_list = [0 for i in range(n_agents)]
-    # n_inner = np.min([n_inner, len(ref_states[i])])
-    for k in range(n_inner): # Multiply MPC steps for each training step
-        for i in range(n_agents):
-            # Generating MPC trajectory
-            # cost_agent = []
-            u, X_pred = agents[i].solve(X0_list[i], u0_list[i], ref_states[i], k, ub, lb)
-            t0_list[i], X0_list[i], u0_list[i] = agents[i].shift_timestep(dt, t0_list[i], X_pred, u)
-            agents[i].states = X0_list[i][:, 1]
-            cost_agent_list[agents[i].id].append(world.get_agent_cost(agents[i].id))
-            # print(agents[i].states)
-            # if agents[i].states[0] <= size_world[0] and agents[i].states[1] <= size_world[1]:
-            #     pass
-            # else:
-            #     print(X0)
-            #     print(agents[i].states)
-            #     assert agents[i].states[0] <= size_world[0] and agents[i].states[1] <= size_world[1]
+    cost_explore_list = []
 
-            # Log for visualization
-            cat_states_list[i] = np.dstack((cat_states_list[i], dm_to_array(X_pred)))
+    for i in range(n_agents):
+        agents[i].states = one_explore_steps_xytheta_goals[i]
+        cost_agent_list.append(world.get_agent_cost(agents[i].id))
+        # Log for visualization
+        cat_states_list[i] = np.dstack((cat_states_list[i], one_explore_steps_xytheta_goals[i].reshape(-1, 1)))
 
-        world.step()
-        cost_world_list.append(torch.tensor(world.get_cost_mean(thre=thre)))
-        # cost_world_list.append(torch.tensor(world.get_cost_max()))
-        heatmaps.append(np.copy(world.heatmap))
-        cov_lvls.append(np.copy(world.cov_lvl))
+            # cost_agent.append(torch.tensor(world.get_agent_cost(agents[i].id)))
+    world.step()
+    cost_explore_list.append(torch.tensor(world.get_cost_explore()))
+    cost_world_list.append(torch.tensor(world.get_cost_mean(thre=thre)))
+    # cost_world_list.append(torch.tensor(world.get_cost_max()))
+    heatmaps.append(np.copy(world.heatmap))
+    cov_lvls.append(np.copy(world.cov_lvl))
 
-    cost_agents = torch.tensor(cost_agent_list, device=dev).sum()
+    cost_agents = torch.tensor(cost_agent_list, device=dev)
+    cost_agents = torch.zeros_like(cost_agents)
     cost_world = torch.sum(torch.tensor(cost_world_list).to(dev))
+    cost_explore = torch.sum(torch.tensor(cost_explore_list).to(dev))
     # cost_world = 0
-    cost = cost_agents + cost_world
+    # cost = cost_agents.sum() + cost_world + cost_explore
+    cost = cost_explore
     # loss = torch.matmul(torch.stack(log_probs), cost)
     loss = torch.stack(log_probs).sum() * cost
-    # optim.zero_grad()
+    # loss = loss_explore
+    # optim.zero_grad() 
     loss.backward()
     optim.step()
     grad_norm = compute_gradient_norm(decisionNN)
 
-    print("Cost:%.3f"%cost.sum().detach().cpu().numpy())
+    print("Cost:%.3f"%cost.detach().cpu().numpy())
     print('loss: %.3f'%loss.detach().cpu().numpy())
     print('Gradient norm: %.3f'%grad_norm)
     print()
     
-    writer.add_scalar("Cost/cost", cost.sum().detach().cpu().numpy(), ep * T + t)
-    writer.add_scalar("Cost/world", cost_world.sum().detach().cpu().numpy(), ep * T + t)
-    writer.add_scalar("Cost/agent", cost_agents.detach().cpu().numpy(), ep * T + t)
+    writer.add_scalar("Cost/world", cost_world.detach().cpu().numpy(), ep * T + t)
+    writer.add_scalar("Cost/explore", cost_explore.detach().cpu().numpy(), ep * T + t)
     writer.add_scalar("Loss/train", loss.detach().cpu().numpy(), ep * T + t)
     writer.add_scalar('Norm/grad', grad_norm, ep * T + t)
     writer.flush()
@@ -122,7 +123,7 @@ def train(world, optim):
 
 if __name__=='__main__':
     # Set training to be deterministic
-    seed = 5
+    seed = 5 # 5
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
@@ -130,25 +131,34 @@ if __name__=='__main__':
     os.environ['PYTHONHASHSEED'] = str(seed)
 
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
-    n_agents = 4
-    epochs = 25
-    T = 10
-    n_inner = 50
+    n_agents = 3
+    T = 200 # Length of an episod
+    epochs = 30
+    n_inner = 20
     hypers.init([5, 5, 0.1])
     size_world = (30, 30)
     len_grid = 1
     # heatmap = np.random.uniform(0.1, 0.5, size_world)
-    heatmap = np.ones(size_world)
-    for i in range(6):
-        heatmap[:, int(i*5):int((i+1)*5)] = 0.2 * i # * np.random.uniform(0, 1, (20, 20))
+    heatmap = np.ones(size_world) * 0.1
+    heatmap[10:20, 10:20] = 0.8 # * np.random.uniform(0, 1, (20, 20))
+    # heatmap[24:29, 0:29] = 0 # * np.random.uniform(0, 1, (20, 20))
     # upper_bound = np.mean(heatmap)
     # upper_bound = torch.tensor(upper_bound, dtype=torch.float32, device=dev)
     world = GridWorld(size_world, len_grid, heatmap, obstacles=None)
-    affix = f'agent{n_agents}_epoch{epochs}_rand'
+    affix = f'agent{n_agents}_epoch{epochs}_tele_episodic'
     writer = SummaryWriter(log_dir='runs/overfitting/' + affix)
     thre = np.mean(heatmap * 0.3)
-    lr = 1e-3
-    
+    lr = 1e-4
+    alpha = -3 # Hyperparameter for cost_explore
+    # Define hyperparameters
+    hparams = {
+        "n_inner": n_inner,
+        "threshold": thre,
+        "num_epochs": epochs
+    }   
+
+    writer.add_hparams(hparams, {})
+
 
     Q_x = 10
     Q_y = 10
@@ -156,48 +166,41 @@ if __name__=='__main__':
     R_v = 0.5
     R_omega = 0.01
     r_s = 3
-    r_c = 10
+    r_c = 0
 
     dt = 0.1
-    N = 30
+    N = 0
 
     r = 3 
-    v = 5
+    v = 1
 
-    v_lim = [0.0, v]
+    v_lim = [0, 5]
     omega_lim = [-casadi.pi/4, casadi.pi/4]
     Q = [Q_x, Q_y, Q_theta]
     R = [R_v, R_omega]
-    obstacles = [(14,4,3), (18,15,3), (6,19,3), (29, 44,3), (38,15,3), (36,29,3), (25, 26,3)]
-    # Define hyperparameters
-    hparams = {
-        'epochs': epochs,
-        'T': T,
-        "n_inner": n_inner,
-        'cost': 'agent+mean_world',
-        'r_c':r_c,
-        'r_s':r_s,
-        'MPC_N': N,
-    }   
-    writer.add_hparams(hparams, {})
+    obstacles = [(14,4,0), (18,15,0), (6,19,0), (29, 44,0), (38,15,0), (36,29,0), (25, 26,0)]
+
     save = True
 
     # TODO Move the definition of obstacles to env, not in agents. Agents must be able to detect obstacles on the run.
     x_init = np.random.uniform(0., size_world[0], (n_agents, 1))
-    y_init = np.random.uniform(0., size_world[1], (n_agents, 1))
+    y_init = np.random.uniform(size_world[1]-1, size_world[1], (n_agents, 1))
+    
+    # y_init = np.random.uniform(0., size_world[1], (n_agents, 1))
     # xy_init[0, :] = np.array([25, 25])
     theta_init= np.random.rand(n_agents, 1)
     state_init = np.concat((x_init, y_init, theta_init), axis=-1)
     # t0_list = [0 for i in range(n_agents)]
-    agents = [MPC_CBF_Unicycle(i, dt, N, v_lim, omega_lim, Q, R, init_state=state_init[i], obstacles = obstacles, flag_cbf=True, r_s=r_s, r_c=r_c) for i in range(n_agents)]
+    agents = [MPC_CBF_Unicycle(i, dt, N, v_lim, omega_lim, Q, R, init_state=state_init[i],
+                                obstacles = obstacles, flag_cbf=True, r_s=r_s, r_c=r_c) for i in range(n_agents)]
     # decisionNN = GraphConvNet(hypers.n_embed_channel, size_kernal=3, dim_observe=2*r_s, size_world=size_world, n_rel=hypers.n_rel, n_head=4).to(dev)
-    decisionNN = GCNPos(hypers.n_embed_channel, size_kernal=3, dim_observe=int(2 * np.ceil(r_s / len_grid) + 1),
+    decisionNN = NetTest(hypers.n_embed_channel, size_kernal=3, dim_observe=int(2 * np.ceil(r_s / len_grid) + 1),
                          size_world=size_world, n_rel=hypers.n_rel, n_head=4).to(dev)
     for i in range(n_agents):
         # During the training time, all the agents share the same decision network. Modify this configuration can achieve distributed learning.
         agents[i].decisionNN = decisionNN
     world.add_agents(agents)
-    optim = torch.optim.Adam(decisionNN.parameters(), lr=lr)
+    optim = torch.optim.Adam(decisionNN.parameters(), lr=lr, weight_decay=1)
     decisionNN.train()
     # Data for visualization
     cat_states_list = [np.tile(agents[i].states[..., None], (1, N+1)) for i in range(n_agents)]
@@ -210,7 +213,6 @@ if __name__=='__main__':
             print(t)
             optim.zero_grad()
             train(world, optim)
-
 
     net_dict = decisionNN.state_dict()
     log_dict = {'cat_states_list': cat_states_list,

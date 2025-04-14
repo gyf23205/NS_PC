@@ -10,8 +10,8 @@ if __name__=='__main__':
     heatmap = np.ones(size_world) * 0
     heatmap[20:40, 25:45] = 0.8
     world = GridWorld(size_world, len_grid, heatmap, obstacles=None)
-    n_agents = 3
-    epochs = 100
+    n_agents = 5
+    epochs = 25
     affix = f'agent{n_agents}_epoch{epochs}_rand'
     
     
@@ -19,7 +19,7 @@ if __name__=='__main__':
         log_dict = pickle.load(f)
 
     # Downsampling the frames
-    interval = 5
+    interval = 10
     cat_states_list = log_dict['cat_states_list']
     for i in range(len(cat_states_list)):
         cat_states_list[i] = cat_states_list[i][:, :, ::interval]

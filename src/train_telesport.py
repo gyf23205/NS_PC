@@ -32,6 +32,7 @@ def train(world, optim):
     observations = world.check()
     dists = world.agents_dist()
     log_probs = []
+    costs = []
     # ref_states = []
     # ub = [size_world[1] * len_grid - 0.1, size_world[0] * len_grid - 0.1, casadi.inf]
     # lb = [0, 0, -casadi.inf]
@@ -41,14 +42,14 @@ def train(world, optim):
     # Each agent gets local observations
     for i in range(n_agents):
         agents[i].update_neighbors(dists[i, :])
-        agents[i].embed_local(torch.tensor(observations[i], dtype=torch.float32))
+        agents[i].embed_local(torch.tensor(observations[i], dtype=torch.float32), size_world, len_grid)
 
     # ref_states_list = []
     one_explore_steps_xytheta_goals = np.zeros([n_agents, 3])
     for i in range(n_agents):
         # Get new waypoints
         neighbor_embed = [agents[j].local_embed for j in agents[i].neighbors]    
-        actions, log_prob = agents[i].generate_waypoints(observations[i], torch.cat(neighbor_embed, dim=0))
+        actions, log_prob, probs = agents[i].generate_waypoints(observations[i], torch.cat(neighbor_embed, dim=0), size_world, len_grid)
         log_probs.append(log_prob)
         xy_goals = action2waypoints(actions, size_world, len_grid)
         # xy_goals = np.array([20., 20.])
@@ -92,7 +93,7 @@ def train(world, optim):
     cost = (cost_agents + cost_world).sum()
     # loss = torch.matmul(torch.stack(log_probs), cost)
     loss = torch.stack(log_probs).sum() * cost
-    optim.zero_grad()
+    # optim.zero_grad() 
     loss.backward()
     optim.step()
     grad_norm = compute_gradient_norm(decisionNN)
@@ -120,7 +121,7 @@ if __name__=='__main__':
     os.environ['PYTHONHASHSEED'] = str(seed)
 
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
-    n_agents = 3
+    n_agents = 4
     epochs = 500
     n_inner = 20
     hypers.init([5, 5, 0.1])
@@ -129,6 +130,7 @@ if __name__=='__main__':
     # heatmap = np.random.uniform(0.1, 0.5, size_world)
     heatmap = np.ones(size_world) * 0.1
     heatmap[10:15, 10:15] = 0.8 # * np.random.uniform(0, 1, (20, 20))
+    heatmap[24:29, 0:29] = 0
     # upper_bound = np.mean(heatmap)
     # upper_bound = torch.tensor(upper_bound, dtype=torch.float32, device=dev)
     world = GridWorld(size_world, len_grid, heatmap, obstacles=None)
@@ -140,8 +142,10 @@ if __name__=='__main__':
     hparams = {
         "n_inner": n_inner,
         "threshold": thre,
-        "num_epochs": 10,
+        "num_epochs": epochs
     }   
+
+    writer.add_hparams(hparams, {})
 
 
     Q_x = 10

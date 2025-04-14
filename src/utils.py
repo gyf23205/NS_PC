@@ -32,6 +32,12 @@ def action2waypoints_local(actions, world_size, len_grid, current_pos):
     coord_y = regulate_coord(coord_y, 0, world_size[1] * len_grid)
     return np.array([coord_x, coord_y])
 
+def normalize_pos(pos, size_world, len_grid):
+    pos_norm = np.zeros((3,))
+    pos_norm[0] = pos[0] / (size_world[0] * len_grid)
+    pos_norm[1] = pos[1] / (size_world[1] * len_grid)
+    pos_norm[2] = pos[2] / np.pi
+    return pos_norm
 
 
 if __name__=='__main__':

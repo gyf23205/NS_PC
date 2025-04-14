@@ -1,4 +1,5 @@
 import torch
+import copy
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -151,26 +152,15 @@ class NetTest(nn.Module):
         # self.pos_linear1 = nn.Linear(3, 128)
         # self.pos_linear2 = nn.Linear(128, 256)
         self.out = nn.Linear(512, self.dim_map)
+        
 
     def forward(self, nothing, neighbors, pos):
-        # pos = self.pos_linear1(pos)
-        # pos = F.relu(pos)
-        # pos = self.pos_linear2(pos)
-        # pos = F.relu(pos)
         x = self.linear1(pos)
         x = F.leaky_relu(x)
-
         x = self.linear2(x)
         x = F.leaky_relu(x)
-        # x = torch.cat([x, pos], dim=-1)
         out = torch.squeeze(self.out(x))
         prob = F.softmax(out, dim=0)
-        # idx = torch.argmax(prob)
-        # eps = (prob[idx] * 0.5)/2499
-        # prob[idx] = prob[idx] * 0.5
-        # prob[0:idx] = prob[0:idx] + eps
-        # prob[idx+1:] = prob[idx+1:] + eps
-        # print(torch.max(prob))
         return prob
     
     def embed_observe(self, nothing, pos):

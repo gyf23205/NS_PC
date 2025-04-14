@@ -1,5 +1,6 @@
 import numpy as np
 import casadi
+import copy
 import matplotlib
 import torch
 from torch.distributions import Categorical
@@ -7,7 +8,7 @@ matplotlib.use('tkagg')
 import hypers
 from mpc_cbf.plan_dubins import plan_dubins_path
 # from visualization import simulate
-from utils import dm_to_array
+from utils import dm_to_array, normalize_pos
 from networks.gcn import GraphConvNet
 
 class MPC_CBF_Unicycle:
@@ -76,22 +77,25 @@ class MPC_CBF_Unicycle:
     # def set_decision_NN(self, dim_observe, size_world):
     #     self.decisionNN = GraphConvNet(hypers.n_embed_channel, size_kernal=3, dim_observe=dim_observe, size_world=size_world, n_rel=hypers.n_rel)
 
-    def embed_local(self, observe):
+    def embed_local(self, observe, size_world, len_grid):
         observe = observe.to(self.dev)
-        self.local_embed = self.decisionNN.embed_observe(observe, torch.tensor(self.states, dtype=torch.float32, device=self.dev).view(1, -1))
+        pos = normalize_pos(self.states, size_world, len_grid)
+        self.local_embed = self.decisionNN.embed_observe(observe, torch.tensor(pos, dtype=torch.float32, device=self.dev).view(1, -1))
 
-    def generate_waypoints(self, observe, neighbors_observe):
+    def generate_waypoints(self, observe, neighbors_observe, size_world, len_grid):
         '''
         Generate waypoints given local observation and neighbors' embeded information
         observe: (1, dim_map, dim_map)
         neighbors_observe: (n_neighbors, dim_embed)
         '''
         observe, neighbors_observe = torch.tensor(observe, dtype=torch.float32, device=self.dev), neighbors_observe.to(self.dev)
-        prob = self.decisionNN(observe, neighbors_observe, torch.tensor(self.states, dtype=torch.float32, device=self.dev).view(1, -1))
+        pos = normalize_pos(self.states, size_world, len_grid)
+        probs = self.decisionNN(observe, neighbors_observe, torch.tensor(pos, dtype=torch.float32, device=self.dev).view(1, -1))
         # actions = torch.multinomial(prob, 1).cpu().numpy() # Sample one destination for current time step
         # log_prob = torch.log(prob)
-        print(torch.argmax(prob))
-        dist = Categorical(prob)
+        print(torch.argmax(probs))
+        print(torch.max(probs))
+        dist = Categorical(probs)
         action = dist.sample()
         log_prob = dist.log_prob(action)
 

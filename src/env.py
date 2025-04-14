@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 
 
 class GridWorld(object):
-    def __init__(self, size_world, len_grid, heatmap, obstacles, decay=0.001, increase=0.05) -> None:
+    def __init__(self, size_world, len_grid, heatmap, obstacles, decay=0.001, increase=0.05, alpha=-5) -> None:
         '''
         The left-up is (0, 0). Down and right are positive directions for y and x.
         size: 2-D integer array. Size of the grid world.
@@ -25,6 +25,7 @@ class GridWorld(object):
         self.increase = increase
         self.len_grid = len_grid
         self.agent_rs = None
+        self.alpha = alpha
         self.x_coord = 0.5 * len_grid + np.repeat(np.arange(size_world[1])[None, :] * len_grid, size_world[0], axis=0)
         self.y_coord = 0.5 * len_grid + np.repeat(np.arange(size_world[0])[:, None] * len_grid, size_world[1], axis=1)
         print()
@@ -54,16 +55,18 @@ class GridWorld(object):
         grid_agent_dist = self._grid_agents_dist()
         for i, agent in enumerate(self.agents):
             # dist = np.sqrt((self.x_coord - agent.states[0])**2 + (self.y_coord - agent.states[1])**2)
-            current_grid = (int((agent.states[0]+ self.agent_rs) // self.len_grid ), int((agent.states[1] + self.agent_rs) // self.len_grid))
-            left, right = current_grid[0] - self.agent_rs, current_grid[0] + self.agent_rs,
-            up, down = current_grid[1] - self.agent_rs, current_grid[1] + self.agent_rs
+            current_grid = (int(np.ceil((agent.states[0]+ self.agent_rs) / self.len_grid )),
+                             int(np.ceil((agent.states[1] + self.agent_rs) / self.len_grid)))
+            r_s_grid = np.ceil(self.agent_rs / self.len_grid)
+            left, right = int(current_grid[0] - r_s_grid), int(current_grid[0] + r_s_grid),
+            up, down = int(current_grid[1] - r_s_grid), int(current_grid[1] + r_s_grid)
             # print(current_grid)
             # print((left, right, up, down))
             temp = np.copy(self.heatmap_pad)
             mask = grid_agent_dist[i] > self.agent_rs
-            mask = np.pad(mask, np.ceil(self.agents[0].r_s), constant_values=True)
+            mask = np.pad(mask, int(np.ceil(self.agents[0].r_s / self.len_grid)), constant_values=True)
             temp[mask] = 0
-            observations.append(temp[None, up:down, left:right])
+            observations.append(temp[None, up:down+1, left:right+1])
             # observations.append(np.ones((1,6,6))*0.1*i)
         return observations
 
@@ -79,7 +82,7 @@ class GridWorld(object):
     def add_agents(self, agents):
         self.agents = agents
         self.agent_rs = self.agents[0].r_s
-        self.heatmap_pad = np.pad(self.heatmap, np.ceil(self.agents[0].r_s))
+        self.heatmap_pad = np.pad(self.heatmap, int(np.ceil(self.agents[0].r_s / self.len_grid)))
 
     def get_agent_cost(self, id):
         grid_agent_dist = self._grid_agents_dist()
@@ -87,7 +90,7 @@ class GridWorld(object):
             if a.id == id:
                 mask = grid_agent_dist[i] < self.agent_rs
                 break
-        return -np.mean(self.heatmap[mask] * self.cov_lvl[mask]) # By overlapping, each agent can get lower cost. Is this reasonable?
+        return -np.mean(self.heatmap[mask]) # By overlapping, each agent can get lower cost. Is this reasonable?
 
     def get_cost_max(self):
         '''
@@ -101,6 +104,12 @@ class GridWorld(object):
         # else:
         #     return 0
         return -np.mean(self.heatmap * self.cov_lvl)
+    
+    def get_cost_explore(self):
+        pos = np.stack([agent.states[0:2] for agent in self.agents], axis=0)
+        pos_mean = np.mean(pos, axis=0)
+        dist = np.linalg.norm(pos - pos_mean)
+        return -np.exp(self.alpha * dist)
     
     # def get_cost_avg(self):
     #     '''
