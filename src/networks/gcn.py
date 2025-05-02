@@ -81,7 +81,7 @@ class GCNPos(nn.Module):
             x = x + res2
             x = self.layernorms[i+self.n_rel](x)
         out = torch.squeeze(self.out(x))
-        return F.softmax(out, dim=0)
+        return out
     
     def embed_observe(self, x, pos):
         with torch.no_grad():
@@ -172,38 +172,35 @@ class NetTest(nn.Module):
         return x
     
 
-class NetTest1(nn.Module):
-    def __init__(self, n_embed_channel, size_kernal, dim_observe, size_world, n_rel, n_head=8):
+class NetCentralized(nn.Module):
+    def __init__(self, size_world, n_agents):
         super().__init__()
+        self.size_world = size_world
+        self.n_agents = n_agents
         self.dim_map = size_world[0] * size_world[1]
         self.conv = nn.Conv2d(2, 1, 3)
-        self.pool = nn.MaxPool2d(3)
-        # self.dim_embed = 784 # This is for 30 * 30 world size
-        self.linear1 = nn.Linear(3, 256)
-        self.linear2 = nn.Linear(337, 512)
+        # self.pool = nn.MaxPool2d(3)
+        h_out = size_world[0] - 2
+        w_out = size_world[1] - 2
+        self.pos_embed = nn.Linear(2 * n_agents, 256)
+        self.linear1 = nn.Linear(256+h_out*w_out, 1024)
         # self.pos_linear1 = nn.Linear(3, 128)
         # self.pos_linear2 = nn.Linear(128, 256)
-        self.out = nn.Linear(512, self.dim_map)
+        self.out = nn.Linear(1024, self.dim_map * n_agents)
 
     def forward(self, heatmap, cov_lvl, pos):
         maps = torch.stack([heatmap, cov_lvl])
         maps = self.conv(maps)
-        maps = self.pool(maps)
-        x = self.linear1(pos)
-        x = F.leaky_relu(x)
-        x = torch.cat([x, maps.view(1, -1)], dim=-1)
-        x = self.linear2(x)
+        # maps = self.pool(maps)
+        x = self.pos_embed(pos)
+        x = F.leaky_relu(x) # (n_agents, 256)
+        x = torch.cat([x.view(1, -1), maps.view(1, -1)], dim=-1)
+        x = self.linear1(x)
         x = F.leaky_relu(x)
         # x = torch.cat([x, pos], dim=-1)
-        out = torch.squeeze(self.out(x))
-        prob = F.softmax(out, dim=0)
-        # idx = torch.argmax(prob)
-        # eps = (prob[idx] * 0.5)/2499
-        # prob[idx] = prob[idx] * 0.5
-        # prob[0:idx] = prob[0:idx] + eps
-        # prob[idx+1:] = prob[idx+1:] + eps
-        # print(torch.max(prob))
-        return prob
+        logits = torch.squeeze(self.out(x)).view(self.n_agents, self.size_world[0]*self.size_world[1])
+        # probs = F.softmax(logits, dim=1)
+        return logits
     
     def embed_observe(self, nothing):
         return

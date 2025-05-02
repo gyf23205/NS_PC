@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 def dm_to_array(dm):
         return np.array(dm.full())
@@ -14,7 +15,7 @@ def action2waypoints(actions, world_size, len_grid):
     col = actions % n_col
     coord_x = 0.5 * len_grid + col * len_grid
     coord_y = 0.5 * len_grid + row * len_grid
-    return np.array([coord_x, coord_y])
+    return torch.stack([coord_x, coord_y], dim=-1)
     # return np.concat([coord_x, coord_y], axis=-1)
 
 def regulate_coord(coord, cmin, cmax):

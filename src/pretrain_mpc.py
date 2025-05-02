@@ -13,8 +13,7 @@ from utils import dm_to_array
 from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
 
-def test(world):
-    criteria = torch.nn.CrossEntropyLoss()
+def pretrain(world, optim):
     agents = world.agents
     observations = world.check()
     dists = world.agents_dist()
@@ -26,47 +25,61 @@ def test(world):
 
     # Get policy for all agents
     logits_all = []
+    # x_pos = []
+    # y_pos = []
     ref_states = []
     ub = [size_world[1] * len_grid - 0.1, size_world[0] * len_grid - 0.1, casadi.inf]
     lb = [0, 0, -casadi.inf]
     goals = []
     for i in range(n_agents):
         # Get new waypoints
-        neighbor_embed = [agents[j].local_embed for j in agents[i].neighbors]
+        # x_pos.append(agents[i].states[0])
+        # y_pos.append(agents[i].states[1])
+        neighbor_embed = [agents[j].local_embed for j in agents[i].neighbors]    
         actions, log_prob, logits = agents[i].generate_waypoints(observations[i], torch.cat(neighbor_embed, dim=0), size_world, len_grid)
         logits_all.append(logits)
         xy_goals = action2waypoints(actions, size_world, len_grid)
         goals.append(xy_goals)
-        dx = xy_goals[0] - agents[i].states[0]
-        dy = xy_goals[1] - agents[i].states[1]
-        theta_goal = np.degrees(np.atan2(dy, dx))[None, ...]
-        
-        # theta_goals = np.array([theta])
-        state_goal = np.concat((xy_goals, theta_goal), axis=-1)
-
-        # Generating ref trajectory
-        path_x, path_y, path_yaw, _, _ = plan_dubins_path(agents[i].states[0], agents[i].states[1], agents[i].states[2],
-                                                        state_goal[0], state_goal[1], state_goal[2], r, step_size=v*dt)
-        ref_states.append(np.array([path_x, path_y, path_yaw]).T)
     logits_all = torch.stack(logits_all)
 
     # Get supervisions
-    weights = (world.cov_lvl + eps) * world.heatmap
+    weights = (world.cov_lvl + eps) * world.heatmap # Weights is now = heatmap
     grid_agent_dist = world.grid_agents_dist()
     clusters = np.argmin(grid_agent_dist, axis=0)
-
+    # plt.scatter(x_pos, y_pos)
+    # plt.imshow(clusters)
+    # plt.show()
     targets = []
     goals_oracle = []
     for i in range(n_agents):
         mask = clusters == i
         x = np.sum(world.x_coord[mask] * (weights[mask]/np.sum(weights[mask])))
         y = np.sum(world.y_coord[mask] * (weights[mask]/np.sum(weights[mask])))
-        goals_oracle.append((x, y))
+        xy = np.array([x, y])
+        goals_oracle.append(xy)
+        dx = x - agents[i].states[0]
+        dy = y - agents[i].states[1]
+        print((dx, dy))
+        theta_goal = np.degrees(np.atan2(dy, dx))[None, ...]
+        
+        # theta_goals = np.array([theta])
+        state_goal = np.concat([xy, theta_goal], axis=-1)
+
+        # Generating ref trajectory
+        path_x, path_y, path_yaw, _, _ = plan_dubins_path(agents[i].states[0], agents[i].states[1], agents[i].states[2],
+                                                        state_goal[0], state_goal[1], state_goal[2], r, step_size=v*dt)
+        ref_states.append(np.array([path_x, path_y, path_yaw]).T)
         x_grid, y_grid = np.floor(2 * x) / 2, np.floor(2 * y) / 2
         idx = int((y_grid - 0.5 * len_grid) * size_world[1] + x // len_grid)
         targets.append(idx)
     targets = torch.tensor(targets, dtype=int, device=dev)
+    # targets_dist = torch.zeros_like(logits_all, dtype=torch.float32, device=dev)
+    # for k in range(targets.shape[0]):
+    #     targets_dist[k, targets[k]] = 1.
     loss = criteria(logits_all, targets)
+    optim.zero_grad()
+    loss.backward()
+    optim.step()
     # print(compute_gradient_norm(decisionNN))
     diff = 0
     for i in range(n_agents):
@@ -107,6 +120,7 @@ def compute_gradient_norm(model, norm_type=2):
                 total_norm += param_norm.item() ** norm_type
         total_norm = total_norm ** (1.0 / norm_type)
     return total_norm
+ 
 
 
 if __name__=='__main__':
@@ -120,7 +134,8 @@ if __name__=='__main__':
 
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
     n_agents = 4
-    epochs_test = 100
+    epochs = 0
+    epochs_pretrain = 100
     T = 10
     n_inner = 50
     hypers.init([5, 5, 0.1])
@@ -135,10 +150,12 @@ if __name__=='__main__':
     # plt.imshow(heatmap)
     # plt.show()
     world = GridWorld(size_world, len_grid, heatmap, obstacles=None)
-    affix = f'agent{n_agents}_epoch{epochs_test}_pre_only'
-    writer = SummaryWriter(log_dir='runs/test/' + affix)
+    affix = f'agent{n_agents}_epoch{epochs}_pre_only'
+    writer = SummaryWriter(log_dir='runs/overfitting/' + affix)
     thre = np.mean(heatmap * 0.3)
+    lr = 1e-4
     
+
     Q_x = 10
     Q_y = 10
     Q_theta = 1
@@ -158,6 +175,18 @@ if __name__=='__main__':
     Q = [Q_x, Q_y, Q_theta]
     R = [R_v, R_omega]
     obstacles = [(14,4,0), (18,15,0), (6,19,0), (29, 44,0), (38,15,0), (36,29,0), (25, 26,0)]
+    criteria = torch.nn.CrossEntropyLoss()
+    # Define hyperparameters
+    hparams = {
+        'epochs': epochs,
+        'T': T,
+        "n_inner": n_inner,
+        'cost': 'agent+mean_world',
+        'r_c':r_c,
+        'r_s':r_s,
+        'MPC_N': N,
+    }   
+    # writer.add_hparams(hparams, {})
     save = True
 
     # TODO Move the definition of obstacles to env, not in agents. Agents must be able to detect obstacles on the run.
@@ -171,22 +200,29 @@ if __name__=='__main__':
     # decisionNN = GraphConvNet(hypers.n_embed_channel, size_kernal=3, dim_observe=2*r_s, size_world=size_world, n_rel=hypers.n_rel, n_head=4).to(dev)
     decisionNN = GCNPos(hypers.n_embed_channel, size_kernal=3, dim_observe=int(2 * np.ceil(r_s / len_grid) + 1),
                          size_world=size_world, n_rel=hypers.n_rel, n_head=4).to(dev)
-    state_dict = torch.load('results/pretrained_models/model_agent4_epoch50.tar', weights_only=True)['net_dict']
-    decisionNN.load_state_dict(state_dict)
     for i in range(n_agents):
         # During the training time, all the agents share the same decision network. Modify this configuration can achieve distributed learning.
         agents[i].decisionNN = decisionNN
     world.add_agents(agents)
-    decisionNN.eval()
-
+    optim = torch.optim.Adam(decisionNN.parameters(), lr=lr)
+    torch.nn.utils.clip_grad_norm_(decisionNN.parameters(), max_norm=20.)
+    decisionNN.train()
     # Data for visualization
     cat_states_list = [np.tile(agents[i].states[..., None], (1, N+1)) for i in range(n_agents)]
     heatmaps = []
     cov_lvls = []
 
     # Pretrain
-    for ep in range(epochs_test):
-        test(world)
+    for ep in range(epochs_pretrain):
+        pretrain(world, optim)
+
+    # # Training
+    # for ep in range(epochs):
+    #     optim.zero_grad()
+    #     for t in range(T):
+    #         print(t)
+    #         train(world, optim)
+
 
     net_dict = decisionNN.state_dict()
     log_dict = {'cat_states_list': cat_states_list,
@@ -194,6 +230,9 @@ if __name__=='__main__':
                 'cov_lvls': cov_lvls,
                 'obstacles': obstacles}
     
-    with open(f'./results/traj_log/test_traj_' + affix + '.pkl', 'wb') as f:
+    with open(f'./results/traj_log/train_traj_' + affix + '.pkl', 'wb') as f:
         pickle.dump(log_dict, f)
+
+    if save:
+        torch.save({'net_dict': net_dict}, 'results/saved_models/model_' + affix+ '.tar')
         

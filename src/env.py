@@ -29,8 +29,17 @@ class GridWorld(object):
         self.x_coord = 0.5 * len_grid + np.repeat(np.arange(size_world[1])[None, :] * len_grid, size_world[0], axis=0)
         self.y_coord = 0.5 * len_grid + np.repeat(np.arange(size_world[0])[:, None] * len_grid, size_world[1], axis=1)
         print()
-      
-    def _grid_agents_dist(self):
+    
+    def init_agents_pos(self, pos):
+        for i,a in enumerate(self.agents):
+            a.states[0:2] = pos[i, :]
+
+    def get_agents_pos(self):
+        pos = [a.states[0:2] for a in self.agents]
+        return np.array(pos)
+
+
+    def grid_agents_dist(self):
         dist = []
         for a in self.agents:
             dx = self.x_coord - a.states[0]
@@ -52,11 +61,11 @@ class GridWorld(object):
         Check the surrounding environemtn and return the observations. Now using square shape observing regions.
         '''
         observations = []
-        grid_agent_dist = self._grid_agents_dist()
+        grid_agent_dist = self.grid_agents_dist()
         for i, agent in enumerate(self.agents):
             # dist = np.sqrt((self.x_coord - agent.states[0])**2 + (self.y_coord - agent.states[1])**2)
-            current_grid = (int(np.ceil((agent.states[0]+ self.agent_rs) / self.len_grid )),
-                             int(np.ceil((agent.states[1] + self.agent_rs) / self.len_grid)))
+            current_grid = (int((agent.states[0] + self.agent_rs) / self.len_grid),
+                             int((agent.states[1] + self.agent_rs) / self.len_grid))
             r_s_grid = np.ceil(self.agent_rs / self.len_grid)
             left, right = int(current_grid[0] - r_s_grid), int(current_grid[0] + r_s_grid),
             up, down = int(current_grid[1] - r_s_grid), int(current_grid[1] + r_s_grid)
@@ -71,12 +80,13 @@ class GridWorld(object):
         return observations
 
     def step(self):
-        grid_agent_dist = self._grid_agents_dist()
+        grid_agent_dist = self.grid_agents_dist()
         for d in grid_agent_dist:
             self.cov_lvl[d < self.agent_rs] += self.increase
         self.cov_lvl -= self.decay
         self.cov_lvl[self.cov_lvl < 0] = 0
         self.cov_lvl[self.cov_lvl > self.cov_max] = self.cov_max
+        # self.cov_lvl = np.ones_like(self.heatmap)
         
     
     def add_agents(self, agents):
@@ -85,7 +95,7 @@ class GridWorld(object):
         self.heatmap_pad = np.pad(self.heatmap, int(np.ceil(self.agents[0].r_s / self.len_grid)))
 
     def get_agent_cost(self, id):
-        grid_agent_dist = self._grid_agents_dist()
+        grid_agent_dist = self.grid_agents_dist()
         for i, a in enumerate(self.agents):
             if a.id == id:
                 mask = grid_agent_dist[i] < self.agent_rs
@@ -99,11 +109,11 @@ class GridWorld(object):
         return np.max(self.heatmap * (self.cov_max - self.cov_lvl))
     
     def get_cost_mean(self,thre):
-        # if np.mean(self.heatmap * self.cov_lvl) > thre:
-        #     return -1
-        # else:
-        #     return 0
-        return -np.mean(self.heatmap * self.cov_lvl)
+        if np.mean(self.heatmap * self.cov_lvl) > thre:
+            return -1
+        else:
+            return 0
+        # return -np.mean(self.heatmap * self.cov_lvl)
     
     def get_cost_explore(self):
         pos = np.stack([agent.states[0:2] for agent in self.agents], axis=0)

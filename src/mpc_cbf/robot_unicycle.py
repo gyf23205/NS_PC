@@ -90,16 +90,17 @@ class MPC_CBF_Unicycle:
         '''
         observe, neighbors_observe = torch.tensor(observe, dtype=torch.float32, device=self.dev), neighbors_observe.to(self.dev)
         pos = normalize_pos(self.states, size_world, len_grid)
-        probs = self.decisionNN(observe, neighbors_observe, torch.tensor(pos, dtype=torch.float32, device=self.dev).view(1, -1))
+        logits = self.decisionNN(observe, neighbors_observe, torch.tensor(pos, dtype=torch.float32, device=self.dev).view(1, -1))
+        probs = torch.nn.functional.softmax(logits, dim=0)
         # actions = torch.multinomial(prob, 1).cpu().numpy() # Sample one destination for current time step
         # log_prob = torch.log(prob)
-        print(torch.argmax(probs))
-        print(torch.max(probs))
+        # print(torch.argmax(probs))
+        # print(torch.max(probs))
         dist = Categorical(probs)
         action = dist.sample()
         log_prob = dist.log_prob(action)
 
-        return action.cpu().numpy(), log_prob
+        return action, log_prob, logits
 
     def generate_waypoints_centralized(self, heatmap, cov_lvl):
         '''
@@ -128,8 +129,17 @@ class MPC_CBF_Unicycle:
 
 
     def shift_timestep(self, h, time, state, control):
+        # delta_state = self.f(state, control[:, 0])
+        # next_state = casadi.DM.full(state + h * delta_state)
+        # next_time = time + h
+        # next_control = casadi.horzcat(control[:, 1:],
+        #                             casadi.reshape(control[:, -1], -1, 1))
+        # return next_time, next_state, next_control
         delta_state = self.f(state, control[:, 0])
-        next_state = casadi.DM.full(state + h * delta_state)
+        next_state = dm_to_array(state + h * delta_state)
+        next_state[0:2][next_state[0:2, :] < 0] = 1e-7
+        next_state = casadi.DM(next_state)
+        next_state = casadi.DM.full(next_state)
         next_time = time + h
         next_control = casadi.horzcat(control[:, 1:],
                                     casadi.reshape(control[:, -1], -1, 1))

@@ -14,7 +14,7 @@ from matplotlib.lines import Line2D
 mpl.rcParams['font.size'] = 14
 mpl.rcParams['text.usetex'] = True
 
-def simulate(world, n_agents, cat_states_list, heatmaps, cov_lvls, obstacles, num_frames, init_list, save, save_path):
+def simulate(world, n_agents, cat_states_list, heatmaps, cov_lvls, goals, obstacles, num_frames, init_list, save, save_path):
     def plot_heatmap(world, i):
         '''
         Inputs:
@@ -80,9 +80,9 @@ def simulate(world, n_agents, cat_states_list, heatmaps, cov_lvls, obstacles, nu
             return coords[:3, :]
 
     def init():
-
+        scat.set_offsets(np.empty((0, 2)))  
         # hm.set_data(np.ones(world.heatmap.shape))
-        return path_list, horizon_list
+        return path_list, horizon_list, scat
 
     def animate(i):
         for k in range(n_agents):
@@ -99,6 +99,9 @@ def simulate(world, n_agents, cat_states_list, heatmaps, cov_lvls, obstacles, nu
             # update current_state
             current_state_list[k].set_xy(create_triangle([x, y, th], update=True))
 
+        # goals_plt.set_data(goals[i][:, 0], goals[i][:, 1])
+        scat.set_offsets(goals[i])
+        scat.set_color(colors)
         # update heatmap
         img_hm = plot_heatmap(world, i)
         hm.set_data(img_hm)
@@ -122,6 +125,9 @@ def simulate(world, n_agents, cat_states_list, heatmaps, cov_lvls, obstacles, nu
     ax[1].xaxis.set_label_position('top')
     ax[1].set_ylim(bottom = world.len_grid * size_world[0], top = min_scale)
 
+    colors = ['red', 'purple', 'blue', 'orange']
+    scat = ax[0].scatter([], [], s=50, c='r')
+    scat.set_color(colors)
     # Obstacles
     for (ox, oy, obsr) in obstacles:
         circle = plt.Circle((ox, oy), obsr, color='r')
@@ -141,7 +147,7 @@ def simulate(world, n_agents, cat_states_list, heatmaps, cov_lvls, obstacles, nu
         ref_path, = ax[0].plot([], [], 'b', linewidth=2)
         horizon, = ax[0].plot([], [], 'x-g', alpha=0.5)
         current_triangle = create_triangle(init_list[k, :])
-        current_state = ax[0].fill(current_triangle[:, 0], current_triangle[:, 1], color='y')
+        current_state = ax[0].fill(current_triangle[:, 0], current_triangle[:, 1], color=colors[k])
         current_state = current_state[0]
 
         path_list.append(path)
@@ -149,7 +155,7 @@ def simulate(world, n_agents, cat_states_list, heatmaps, cov_lvls, obstacles, nu
         horizon_list.append(horizon)
         current_state_list.append(current_state)
 
-
+    # goals_plt = ax[0].scatter(goals[0][:, 0], goals[0][:, 1])
     hm = ax[0].imshow(np.ones(heatmaps[0].shape)*255, origin='lower', extent=[0., world.len_grid * size_world[0], 0, world.len_grid * size_world[1]], cmap='viridis', vmin=0, vmax=255)
     cl = ax[1].imshow(np.ones(cov_lvls[0].shape)*255, origin='lower', extent=[0., world.len_grid * size_world[0], 0, world.len_grid * size_world[1]], cmap='viridis', vmin=0, vmax=255)
     ax[0].set_xlabel('x position')
