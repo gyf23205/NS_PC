@@ -35,10 +35,22 @@ def action2waypoints_local(actions, world_size, len_grid, current_pos):
 
 def normalize_pos(pos, size_world, len_grid):
     pos_norm = np.zeros((3,))
+    # Normalize x and y coordinates to [0, 1] range
+    # Normalize theta to [-pi, pi] range
     pos_norm[0] = pos[0] / (size_world[0] * len_grid)
     pos_norm[1] = pos[1] / (size_world[1] * len_grid)
     pos_norm[2] = pos[2] / np.pi
     return pos_norm
+
+def normalize_pos_tensor(pos, size_world, len_grid):
+    pos_norm = torch.zeros_like(pos)
+    # Normalize x and y coordinates to [0, 1] range
+    # Normalize theta to [-pi, pi] range
+    pos_norm[:, 0] = pos[:, 0] / (size_world[0] * len_grid)
+    pos_norm[:, 1] = pos[:, 1] / (size_world[1] * len_grid)
+    pos_norm[:, 2] = pos[:, 2] / torch.pi
+    return pos_norm
+
 
 
 if __name__=='__main__':

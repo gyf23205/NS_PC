@@ -9,27 +9,13 @@ from env import GridWorld
 import torch.nn.functional as F
 from torch.distributions import Categorical
 from networks.gcn import GraphConvNet, GCNPos, NetCentralized
+from networks.ACnet import ACNetCentralized
 from mpc_cbf.robot_unicycle import MPC_CBF_Unicycle
 from mpc_cbf.plan_dubins import plan_dubins_path
 from utils import dm_to_array
 from torch.utils.tensorboard import SummaryWriter
 
-def get_theta_goals(xy_goal, pos):
-    diff = xy_goal - pos.view(n_agents, 2)
-    theta_goal = torch.atan2(diff[:, 1], diff[:, 0]).view(n_agents, 1)
-    return theta_goal
-
-def compute_gradient_norm(model, norm_type=2):
-    with torch.no_grad():
-        total_norm = 0.0
-        for param in model.parameters():
-            if param.grad is not None:
-                param_norm = param.grad.norm(norm_type)
-                total_norm += param_norm.item() ** norm_type
-        total_norm = total_norm ** (1.0 / norm_type)
-    return total_norm
-
-def train(world, optim):
+def test(world):
     '''
     Define one training episode.
     For each agent, generate one waypoint, following by several MPC steps.
@@ -43,10 +29,10 @@ def train(world, optim):
 
     # Get new waypoints
     pos = torch.tensor(world.get_agents_pos(), dtype=torch.float32, device=dev).view(1, -1)
-    heatmap = torch.tensor(world.heatmap, dtype=torch.float32, device=dev)
-    cov_lvl = torch.tensor(world.cov_lvl, dtype=torch.float32, device=dev)
-    logits = decisionNN(heatmap, cov_lvl, pos)
-    probs = F.softmax(logits, dim=-1)
+    heatmap = torch.tensor(world.heatmap, dtype=torch.float32, device=dev).view(1, 1, size_world[0], size_world[1])
+    cov_lvl = torch.tensor(world.cov_lvl, dtype=torch.float32, device=dev).view(1, 1, size_world[0], size_world[1])
+    logits, _ = decisionNN(heatmap, cov_lvl, pos)
+    probs = F.softmax(torch.squeeze(logits), dim=-1)
     print(torch.argmax(probs, dim=1))
     print(torch.max(probs, dim=1))
     dist = Categorical(probs)
@@ -56,8 +42,8 @@ def train(world, optim):
     xy_goals = action2waypoints(actions, size_world, len_grid)
     # xy_goals = np.array([20., 20.])
     # xy_goals = torch.tensor([[0.5, 29.5], [29.5, 0.5], [29.5, 29.5]], dtype=torch.float32, device=dev)
-    # xy_goals_all.append(xy_goals.detach().cpu().numpy())
-    # probs_all.append(probs.detach().cpu().numpy())
+    xy_goals_all.append(xy_goals.detach().cpu().numpy())
+    probs_all.append(probs.detach().cpu().numpy())
     print(xy_goals)
     # theta_goals = get_theta_goals(xy_goals, pos)
     theta_goals = torch.zeros((n_agents, 1), dtype=torch.float32, device=dev)
@@ -68,23 +54,21 @@ def train(world, optim):
         path_x, path_y, path_yaw, _, _ = plan_dubins_path(agents[i].states[0], agents[i].states[1], agents[i].states[2],
                                                         state_goal[i, 0], state_goal[i, 1], state_goal[i, 2], r, step_size=v*dt)
         ref_states.append(np.array([path_x, path_y, path_yaw]).T)
-    cost_agent_list = []
-    cost_world_list = []
-    
-    # n_inner = np.min([n_inner, len(ref_states[i])])
-    cov_mean_prev = world.get_cost_mean(thre=thre)
-    for k in range(n_inner): # Multiply MPC steps for each training step
+
+
+    for k in range(n_mpc): # Multiply MPC steps for each training step
         u0_list = [casadi.DM.zeros((agents[i].n_controls, N)) for i in range(n_agents)]
         X0_list = [casadi.repmat(agents[i].states, 1, N + 1) for i in range(n_agents)]
         t0_list = [0 for i in range(n_agents)]
+        # for j in range(n_inner):
         for i in range(n_agents):
             # Generating MPC trajectory
             # cost_agent = []
-            # if n_inner % 5 == 0:
+            # if n_mpc % 5 == 0:
             u, X_pred = agents[i].solve(X0_list[i], u0_list[i], ref_states[i], k, ub, lb)
             t0_list[i], X0_list[i], u0_list[i] = agents[i].shift_timestep(dt, t0_list[i], X_pred, u)
             agents[i].states = X0_list[i][:, 1]
-            cost_agent_list.append(world.get_agent_cost(agents[i].id))
+
 
             # Log for visualization
             cat_states_list[i] = np.dstack((cat_states_list[i], dm_to_array(X_pred)))
@@ -92,40 +76,17 @@ def train(world, optim):
             # cost_agent.append(torch.tensor(world.get_agent_cost(agents[i].id)))
 
         world.step()
-        # cost_world_list.append(torch.tensor(world.get_cost_mean(thre=thre)))
-        # cost_world_list.append(torch.tensor(world.get_cost_max()))
-        # heatmaps.append(np.copy(world.heatmap))
-        # cov_lvls.append(np.copy(world.cov_lvl))
+        heatmaps.append(np.copy(world.heatmap))
+        cov_lvls.append(np.copy(world.cov_lvl))
 
-    # cost_agents = torch.tensor(cost_agent_list, device=dev)
-    cost_agents = 0
     # cost_world = torch.sum(torch.tensor(cost_world_list).to(dev))
     cov_mean_after = world.get_cost_mean(thre=thre)
-    adv_world_neg = torch.tensor(cov_mean_after - cov_mean_prev, device=dev)
-    # cost_world = 0
-    cost = (cost_agents + adv_world_neg).sum()
-    # loss = torch.matmul(torch.stack(log_probs), cost)
-    entropy = (-probs * torch.log(probs)).sum(-1).mean()
-    eta = (5 / (ep * T + t + 1))
-    loss = torch.stack(log_probs).sum() * cost - eta * entropy # !!! change to adaptive entropy
-    # loss = - entropy
-    optim.zero_grad()
-    loss.backward()
-    optim.step()
-    grad_norm = compute_gradient_norm(decisionNN)
 
-    print("Negative advantage:%.3f"%adv_world_neg.detach().cpu().numpy())
     print('cov_mean', cov_mean_after)
-    print('loss: %.3f'%loss.detach().cpu().numpy())
-    print('Gradient norm: %.3f'%grad_norm)
+
     print()
 
-    writer.add_scalar("Cost/adv", adv_world_neg.detach().cpu().numpy(), ep * T + t)
-    writer.add_scalar("Cost/cov/mean", cov_mean_after, ep * T + t)
-    # writer.add_scalar("Cost/agent", np.mean(cost_agent_list), epoch)
-    writer.add_scalar("Loss/all", loss.detach().cpu().numpy(), ep * T + t)
-    writer.add_scalar("Loss/entropy", eta * entropy.detach().cpu().numpy(), ep * T + t)
-    writer.add_scalar('Norm/grad', grad_norm, ep * T + t)
+    writer.add_scalar("Cost/mean", cov_mean_after, ep * T + t)
     writer.flush()
  
 
@@ -141,9 +102,11 @@ if __name__=='__main__':
 
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
     n_agents = 4
-    epochs = 100
-    n_inner = 60
-    T = 10
+    epochs = 20
+    epochs_test = 5
+    n_mpc = 60
+    n_inner = 5
+    T = 1
     hypers.init([5, 5, 0.1])
     size_world = (30, 30)
     len_grid = 1
@@ -153,7 +116,7 @@ if __name__=='__main__':
         heatmap[:, int(i*5):int((i+1)*5)] = 0.2 * i # * np.random.uniform(0, 1, (20, 20))
 
     world = GridWorld(size_world, len_grid, heatmap, obstacles=None)
-    affix = f'agent{n_agents}_epoch{epochs}_centralized_changed_adv_more_steps'
+    affix = f'agent{n_agents}_epoch{epochs}_centralized_ppo_shuffled'
     writer = SummaryWriter(log_dir='runs/overfitting/' + affix)
     thre = np.mean(heatmap * 0.3)
     lr = 1e-4
@@ -196,38 +159,35 @@ if __name__=='__main__':
     agents = [MPC_CBF_Unicycle(i, dt, N, v_lim, omega_lim, Q, R, init_state=state_init[i, :], obstacles = obstacles, flag_cbf=True, r_s=r_s, r_c=r_c) for i in range(n_agents)]
     # decisionNN = GraphConvNet(hypers.n_embed_channel, size_kernal=3, dim_observe=2*r_s, size_world=size_world, n_rel=hypers.n_rel, n_head=4).to(dev)
     # decisionNN = GCNPos(hypers.n_embed_channel, size_kernal=3, dim_observe=2*r_s, size_world=size_world, n_rel=hypers.n_rel, n_head=4).to(dev)
-    decisionNN = NetCentralized(size_world, n_agents).to(dev)
-    # for i in range(n_agents):
-    #     # During the training time, all the agents share the same decision network. Modify this configuration can achieve distributed learning.
-    #     agents[i].decisionNN = decisionNN
+    decisionNN = ACNetCentralized(size_world, n_agents).to(dev)
+    decisionNN.load_state_dict(torch.load('results/saved_models/model_' + affix + '.tar', weights_only=True)['net_dict'])
+    
     world.add_agents(agents)
     optim = torch.optim.Adam(decisionNN.parameters(), lr=lr)
-    decisionNN.train()
+    decisionNN.eval()
     # Data for visualization
     cat_states_list = [np.tile(agents[i].states[..., None], (1, N+1)) for i in range(n_agents)]
-    # heatmaps = []
-    # cov_lvls = []
-    # xy_goals_all = []
-    # probs_all = []
+    heatmaps = []
+    cov_lvls = []
+    xy_goals_all = []
+    probs_all = []
 
-    # Training
-    for ep in range(epochs):
-        # optim.zero_grad()
-        for t in range(T):
-            print(t)
-            train(world, optim)
+    # Test
+    with torch.no_grad():
+        for ep in range(epochs_test):
+            # optim.zero_grad()
+            for t in range(T):
+                print(t)
+                test(world)
 
-    net_dict = decisionNN.state_dict()
-    # log_dict = {'cat_states_list': cat_states_list,
-    #             'heatmaps': heatmaps,
-    #             'cov_lvls': cov_lvls,
-    #             'xy_goals': xy_goals_all,
-    #             'probs': probs_all,
-    #             'obstacles': obstacles}
+    log_dict = {'cat_states_list': cat_states_list,
+                'heatmaps': heatmaps,
+                'cov_lvls': cov_lvls,
+                'xy_goals': xy_goals_all,
+                'probs': probs_all,
+                'obstacles': obstacles}
     
-    # with open(f'./results/traj_log/train_traj_' + affix + '.pkl', 'wb') as f:
-    #     pickle.dump(log_dict, f)
+    with open(f'./results/traj_log/train_traj_' + affix + '.pkl', 'wb') as f:
+        pickle.dump(log_dict, f)
 
-    if save:
-        torch.save({'net_dict': net_dict}, 'results/saved_models/model_' + affix+ '.tar')
         

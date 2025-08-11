@@ -35,7 +35,7 @@ class GridWorld(object):
             a.states[0:2] = pos[i, :]
 
     def get_agents_pos(self):
-        pos = [a.states[0:2] for a in self.agents]
+        pos = [a.states for a in self.agents]
         return np.array(pos)
 
 
@@ -79,6 +79,19 @@ class GridWorld(object):
             # observations.append(np.ones((1,6,6))*0.1*i)
         return observations
 
+    def check_square(self):
+        '''
+        Check the surrounding environemtn and return the observations. Now using square shape observing regions.
+        '''
+        observations = []
+        grid_agent_dist = self.grid_agents_dist()
+        for i, agent in enumerate(self.agents):
+            obs = np.zeros(self.size_world)
+            mask = grid_agent_dist[i] < self.agent_rs
+            obs[mask] = self.heatmap[mask]
+            observations.append(obs)
+        return observations
+
     def step(self):
         grid_agent_dist = self.grid_agents_dist()
         for d in grid_agent_dist:
@@ -109,11 +122,18 @@ class GridWorld(object):
         return np.max(self.heatmap * (self.cov_max - self.cov_lvl))
     
     def get_cost_mean(self,thre):
-        if np.mean(self.heatmap * self.cov_lvl) > thre:
-            return -1
-        else:
-            return 0
-        # return -np.mean(self.heatmap * self.cov_lvl)
+        # if np.mean(self.heatmap * self.cov_lvl) > thre:
+        #     return -np.mean(self.heatmap * self.cov_lvl)
+        # else:
+        #     return 0
+        return -np.mean(self.heatmap * self.cov_lvl)
+
+    def get_reward_mean(self, thre):
+        # if np.mean(self.heatmap * self.cov_lvl) > thre:
+        #     return 1
+        # else:
+        #     return 0
+        return np.mean(self.heatmap * self.cov_lvl)
     
     def get_cost_explore(self):
         pos = np.stack([agent.states[0:2] for agent in self.agents], axis=0)

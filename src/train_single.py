@@ -6,7 +6,7 @@ import numpy as np
 import hypers
 from utils import action2waypoints
 from env import GridWorld
-from networks.gcn import GraphConvNet, GCNPos, NetTest
+from networks.gcn import GraphConvNet, GCNPos
 from mpc_cbf.robot_unicycle import MPC_CBF_Unicycle
 from mpc_cbf.plan_dubins import plan_dubins_path
 from utils import dm_to_array

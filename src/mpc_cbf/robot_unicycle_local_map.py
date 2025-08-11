@@ -5,16 +5,18 @@ import matplotlib
 import torch
 from torch.distributions import Categorical
 matplotlib.use('tkagg')
+import matplotlib.pyplot as plt
 import hypers
 from mpc_cbf.plan_dubins import plan_dubins_path
 # from visualization import simulate
 from utils import dm_to_array, normalize_pos
 from networks.gcn import GraphConvNet
 
-class MPC_CBF_Unicycle:
+class MPC_CBF_Map_Unicycle:
     def __init__(self, id, dt ,N, v_lim, omega_lim,  
-                 Q, R, flag_cbf, init_state, 
-                 obstacles= None,  obs_diam = 3, r_d = 0.5, r_c=2.0, r_s=5, alpha=0.005, dev='cuda'):
+                 Q, R, flag_cbf, init_state, world_size, 
+                 increase = 0.05, decay = 0.001, obstacles= None,  obs_diam = 3, len_grid = 1.,
+                 r_d = 0.5, r_c=2.0, r_s=5, alpha=0.005, dev='cuda'):
         '''
         Inputs:
         dt: Scalar, computing period of the MPC solver.
@@ -41,6 +43,18 @@ class MPC_CBF_Unicycle:
         self.n_states = 0
         self.n_controls = 0
         self.states = init_state
+        self.increase = increase
+        self.decay = decay
+        self.size_world = world_size
+        self.len_grid = len_grid
+        self.heatmap = np.ones(world_size)
+        self.heatmap_received = []
+        self.cov_max = 1
+        self.cov_lvl = np.zeros_like(self.heatmap)
+        self.cov_lvl_received = []
+        self.x_coord = 0.5 * len_grid + np.repeat(np.arange(world_size[1])[None, :] * len_grid, world_size[0], axis=0)
+        self.y_coord = 0.5 * len_grid + np.repeat(np.arange(world_size[0])[:, None] * len_grid, world_size[1], axis=1)
+        # print()
 
         self.v_lim = v_lim
         self.omega_lim = omega_lim
@@ -58,16 +72,62 @@ class MPC_CBF_Unicycle:
         self.obstacles = obstacles
         self.neighbors = None
         self.local_embed = None
-        self.heatmap_comu = [] # Store heatmaps from neighbors
-        self.cov_lvl_comu = [] # Store cov_lvs from neighbors
-        # self.running = False # Indicate if current waypoints have all been visited.
-        # self.buffer_states = [] # Store all the future MPC-generated states for current set of waypoints.
-        # self.pointer_buffer_state = 0
-        # self.buffer_cost = []
-        # self.log_prob = None
         self.dev = dev
         # Setup with initialization params
         self.setup()
+
+    def get_local_cov(self):
+        return self.cov_lvl
+    
+    def send_message(self, agents):
+        '''
+        Share local cov_lvl and heatmap with neighbors.
+        agents: List of all agents in the world.
+        '''
+        if self.neighbors is None:
+            return
+        for i in self.neighbors:
+            agents[i].cov_lvl_received.append(self.cov_lvl.copy())
+            agents[i].heatmap_received.append(self.heatmap.copy())
+
+    def update_heatmap_cov(self):
+        '''
+        Update heatmap and cov_lvl with received messages from neighbors.
+        '''
+        self.heatmap = np.min(self.heatmap_received, axis=0)
+        self.cov_lvl = np.max(self.cov_lvl_received, axis=0)
+        self.heatmap_received = []
+        self.cov_lvl_received = []
+
+    def grid_agents_dist(self):
+        dx = self.x_coord - self.states[0]
+        dy = self.y_coord - self.states[1]
+        return np.sqrt(dx**2 + dy**2)
+
+    def update_local_cov(self):
+        grid_agent_dist = self.grid_agents_dist()
+        self.cov_lvl[grid_agent_dist < self.r_s] += self.increase
+        self.cov_lvl -= self.decay
+        self.cov_lvl[self.cov_lvl < 0] = 0
+        self.cov_lvl[self.cov_lvl > self.cov_max] = self.cov_max
+        # plt.imshow(self.cov_lvl)
+        # plt.title(f"Local {self.id}")
+        # plt.show()
+
+    def share_local_maps(self, agents):
+        '''
+        Share local cov_lvl and heatmap with neighbors.
+        agents: List of all agents in the world.
+        '''
+        if self.neighbors is None:
+            return
+        for i in self.neighbors:
+            agents[i].cov_lvl_received.append(self.cov_lvl.copy())
+            agents[i].heatmap_received.append(self.heatmap.copy())
+
+    def update_local_heatmap(self, obs):
+        mask = obs > 0
+        self.heatmap[mask] = obs[mask]
 
     def get_discount_cost(self, costs):
         discounts = torch.tensor([hypers.discount**(i+1) for i in range(len(costs))])
@@ -75,12 +135,6 @@ class MPC_CBF_Unicycle:
 
     def update_neighbors(self, dist):
         self.neighbors = np.where(dist <= self.r_c)[0]
-
-    def share_local_maps(self, agents):
-        for a in agents:
-            if a.id in self.neighbors:
-                a.heatmap_temp.append(self.heatmap)
-                a.cov_lvl_temp.append(self.cov_lvl)
 
     # def set_decision_NN(self, dim_observe, size_world):
     #     self.decisionNN = GraphConvNet(hypers.n_embed_channel, size_kernal=3, dim_observe=dim_observe, size_world=size_world, n_rel=hypers.n_rel)
@@ -90,25 +144,16 @@ class MPC_CBF_Unicycle:
         pos = normalize_pos(self.states, size_world, len_grid)
         self.local_embed = self.decisionNN.embed_observe(observe, torch.tensor(pos, dtype=torch.float32, device=self.dev).view(1, -1))
 
-    def generate_waypoints(self, observe, neighbors_observe, size_world, len_grid):
+    def generate_waypoints(self):
         '''
-        Generate waypoints given local observation and neighbors' embeded information
-        observe: (1, dim_map, dim_map)
-        neighbors_observe: (n_neighbors, dim_embed)
+        Generate waypoints given local heatmap and cov_lvl
         '''
-        observe, neighbors_observe = torch.tensor(observe, dtype=torch.float32, device=self.dev), neighbors_observe.to(self.dev)
-        pos = normalize_pos(self.states, size_world, len_grid)
-        logits = self.decisionNN(observe, neighbors_observe, torch.tensor(pos, dtype=torch.float32, device=self.dev).view(1, -1))
-        probs = torch.nn.functional.softmax(logits, dim=0)
-        # actions = torch.multinomial(prob, 1).cpu().numpy() # Sample one destination for current time step
-        # log_prob = torch.log(prob)
-        # print(torch.argmax(probs))
-        # print(torch.max(probs))
-        dist = Categorical(probs)
-        action = dist.sample()
-        log_prob = dist.log_prob(action)
+        heatmap = torch.tensor(self.heatmap, dtype=torch.float32, device=self.dev).view(-1, 1, self.size_world[0], self.size_world[1])
+        cov_lvl = torch.tensor(self.cov_lvl, dtype=torch.float32, device=self.dev).view(-1, 1, self.size_world[0], self.size_world[1])
+        pos = normalize_pos(self.states, self.size_world, self.len_grid)
+        logits, val = self.decisionNN(heatmap, cov_lvl, torch.tensor(pos, dtype=torch.float32, device=self.dev).view(1, -1))
 
-        return action, log_prob, logits
+        return logits, val
 
     def generate_waypoints_centralized(self, heatmap, cov_lvl):
         '''
@@ -117,8 +162,8 @@ class MPC_CBF_Unicycle:
         neighbors_observe: (n_neighbors, dim_embed)
         '''
         # observe, neighbors_observe = torch.tensor(observe, dtype=torch.float32, device=self.dev), neighbors_observe.to(self.dev)
-        heatmap = torch.tensor(heatmap, dtype=torch.float32, device=self.dev)
-        cov_lvl = torch.tensor(cov_lvl, dtype=torch.float32, device=self.dev)
+        heatmap = torch.tensor(heatmap, dtype=torch.float32, device=self.dev).view(-1, 1, self.size_world[0], self.size_world[1])
+        cov_lvl = torch.tensor(cov_lvl, dtype=torch.float32, device=self.dev).view(-1, 1, self.size_world[0], self.size_world[1])
         prob = self.decisionNN(heatmap, cov_lvl, torch.tensor(self.states, dtype=torch.float32, device=self.dev).view(1, -1))
         # actions = torch.multinomial(prob, 1).cpu().numpy() # Sample one destination for current time step
         # log_prob = torch.log(prob)

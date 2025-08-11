@@ -9,9 +9,11 @@ from env import GridWorld
 import torch.nn.functional as F
 from torch.distributions import Categorical
 from networks.gcn import GraphConvNet, GCNPos, NetCentralized
-from mpc_cbf.robot_unicycle import MPC_CBF_Unicycle
+# from mpc_cbf.robot_unicycle import MPC_CBF_Unicycle
+from mpc_cbf.robot_unicycle_local_map import MPC_CBF_Map_Unicycle
 from mpc_cbf.plan_dubins import plan_dubins_path
 from utils import dm_to_array
+import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 
 def get_theta_goals(xy_goal, pos):
@@ -44,11 +46,25 @@ def train(world, optim):
     # Get new waypoints
     pos = torch.tensor(world.get_agents_pos(), dtype=torch.float32, device=dev).view(1, -1)
     heatmap = torch.tensor(world.heatmap, dtype=torch.float32, device=dev)
-    cov_lvl = torch.tensor(world.cov_lvl, dtype=torch.float32, device=dev)
+
+    cov_lvl = []
+    for a in agents:
+        cov_lvl.append(a.get_local_cov())
+    cov_lvl = np.max(cov_lvl, axis=0)
+    for a in agents:
+        a.cov_lvl = cov_lvl.copy()
+    cov_lvl = torch.tensor(cov_lvl, dtype=torch.float32, device=dev)
+
+    writer.add_scalar('Diff', np.sum(np.abs(world.cov_lvl - cov_lvl.cpu().detach().numpy())), ep * T + t)
+    print(np.sum(world.cov_lvl - cov_lvl.cpu().detach().numpy()))
+    # fig, axs = plt.subplots(1, 2)
+    # axs[0].imshow(world.cov_lvl)
+    # axs[1].imshow(cov_lvl.cpu().detach().numpy())
+    # plt.show()
     logits = decisionNN(heatmap, cov_lvl, pos)
     probs = F.softmax(logits, dim=-1)
-    print(torch.argmax(probs, dim=1))
-    print(torch.max(probs, dim=1))
+    # print(torch.argmax(probs, dim=1))
+    # print(torch.max(probs, dim=1))
     dist = Categorical(probs)
     actions = dist.sample()
     log_prob = dist.log_prob(actions)
@@ -56,9 +72,8 @@ def train(world, optim):
     xy_goals = action2waypoints(actions, size_world, len_grid)
     # xy_goals = np.array([20., 20.])
     # xy_goals = torch.tensor([[0.5, 29.5], [29.5, 0.5], [29.5, 29.5]], dtype=torch.float32, device=dev)
-    # xy_goals_all.append(xy_goals.detach().cpu().numpy())
-    # probs_all.append(probs.detach().cpu().numpy())
-    print(xy_goals)
+    xy_goals_all.append(xy_goals.detach().cpu().numpy())
+    # print(xy_goals)
     # theta_goals = get_theta_goals(xy_goals, pos)
     theta_goals = torch.zeros((n_agents, 1), dtype=torch.float32, device=dev)
     state_goal = torch.cat((xy_goals, theta_goals), dim=-1).detach().cpu().numpy()
@@ -72,7 +87,7 @@ def train(world, optim):
     cost_world_list = []
     
     # n_inner = np.min([n_inner, len(ref_states[i])])
-    cov_mean_prev = world.get_cost_mean(thre=thre)
+    
     for k in range(n_inner): # Multiply MPC steps for each training step
         u0_list = [casadi.DM.zeros((agents[i].n_controls, N)) for i in range(n_agents)]
         X0_list = [casadi.repmat(agents[i].states, 1, N + 1) for i in range(n_agents)]
@@ -88,43 +103,44 @@ def train(world, optim):
 
             # Log for visualization
             cat_states_list[i] = np.dstack((cat_states_list[i], dm_to_array(X_pred)))
+            agents[i].map_step()
+            # if k % 30 == 0:
+            #     plt.imshow(agents[i].cov_lvl)
+            #     plt.title(f'Local {i}')
+            #     plt.show()
 
             # cost_agent.append(torch.tensor(world.get_agent_cost(agents[i].id)))
 
         world.step()
         # cost_world_list.append(torch.tensor(world.get_cost_mean(thre=thre)))
         # cost_world_list.append(torch.tensor(world.get_cost_max()))
-        # heatmaps.append(np.copy(world.heatmap))
-        # cov_lvls.append(np.copy(world.cov_lvl))
+        heatmaps.append(np.copy(world.heatmap))
+        cov_lvls.append(np.copy(world.cov_lvl))
 
     # cost_agents = torch.tensor(cost_agent_list, device=dev)
     cost_agents = 0
     # cost_world = torch.sum(torch.tensor(cost_world_list).to(dev))
-    cov_mean_after = world.get_cost_mean(thre=thre)
-    adv_world_neg = torch.tensor(cov_mean_after - cov_mean_prev, device=dev)
+    cost_world = torch.tensor(world.get_cost_mean(thre=thre))
     # cost_world = 0
-    cost = (cost_agents + adv_world_neg).sum()
+    cost = (cost_agents + cost_world).sum()
     # loss = torch.matmul(torch.stack(log_probs), cost)
-    entropy = (-probs * torch.log(probs)).sum(-1).mean()
-    eta = (5 / (ep * T + t + 1))
-    loss = torch.stack(log_probs).sum() * cost - eta * entropy # !!! change to adaptive entropy
-    # loss = - entropy
+    entrophy = (-probs * torch.log(probs)).sum(-1).mean()
+    loss = torch.stack(log_probs).sum() * cost - 1 * entrophy
+    # loss = - entrophy
     optim.zero_grad()
     loss.backward()
     optim.step()
     grad_norm = compute_gradient_norm(decisionNN)
 
-    print("Negative advantage:%.3f"%adv_world_neg.detach().cpu().numpy())
-    print('cov_mean', cov_mean_after)
+    print("Cost:%.3f"%cost.detach().cpu().numpy())
     print('loss: %.3f'%loss.detach().cpu().numpy())
     print('Gradient norm: %.3f'%grad_norm)
     print()
-
-    writer.add_scalar("Cost/adv", adv_world_neg.detach().cpu().numpy(), ep * T + t)
-    writer.add_scalar("Cost/cov/mean", cov_mean_after, ep * T + t)
+    
+    writer.add_scalar("Cost/cost", cost.detach().cpu().numpy(), ep * T + t)
     # writer.add_scalar("Cost/agent", np.mean(cost_agent_list), epoch)
     writer.add_scalar("Loss/all", loss.detach().cpu().numpy(), ep * T + t)
-    writer.add_scalar("Loss/entropy", eta * entropy.detach().cpu().numpy(), ep * T + t)
+    writer.add_scalar("Loss/entrophy", entrophy.detach().cpu().numpy(), ep * T + t)
     writer.add_scalar('Norm/grad', grad_norm, ep * T + t)
     writer.flush()
  
@@ -141,7 +157,7 @@ if __name__=='__main__':
 
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
     n_agents = 4
-    epochs = 100
+    epochs = 10
     n_inner = 60
     T = 10
     hypers.init([5, 5, 0.1])
@@ -153,7 +169,7 @@ if __name__=='__main__':
         heatmap[:, int(i*5):int((i+1)*5)] = 0.2 * i # * np.random.uniform(0, 1, (20, 20))
 
     world = GridWorld(size_world, len_grid, heatmap, obstacles=None)
-    affix = f'agent{n_agents}_epoch{epochs}_centralized_changed_adv_more_steps'
+    affix = f'agent{n_agents}_epoch{epochs}_centralized'
     writer = SummaryWriter(log_dir='runs/overfitting/' + affix)
     thre = np.mean(heatmap * 0.3)
     lr = 1e-4
@@ -193,7 +209,7 @@ if __name__=='__main__':
     state_init = np.concat((x_init, y_init, theta_init), axis=-1)
     # state_init = np.array([[15, 15, 3*np.pi/4],[15, 15, -np.pi/4],[15, 15, np.pi/4]])
     # t0_list = [0 for i in range(n_agents)]
-    agents = [MPC_CBF_Unicycle(i, dt, N, v_lim, omega_lim, Q, R, init_state=state_init[i, :], obstacles = obstacles, flag_cbf=True, r_s=r_s, r_c=r_c) for i in range(n_agents)]
+    agents = [MPC_CBF_Map_Unicycle(i, dt, N, v_lim, omega_lim, Q, R, init_state=state_init[i, :], heatmap=heatmap, obstacles = obstacles, flag_cbf=True, r_s=r_s, r_c=r_c) for i in range(n_agents)]
     # decisionNN = GraphConvNet(hypers.n_embed_channel, size_kernal=3, dim_observe=2*r_s, size_world=size_world, n_rel=hypers.n_rel, n_head=4).to(dev)
     # decisionNN = GCNPos(hypers.n_embed_channel, size_kernal=3, dim_observe=2*r_s, size_world=size_world, n_rel=hypers.n_rel, n_head=4).to(dev)
     decisionNN = NetCentralized(size_world, n_agents).to(dev)
@@ -205,10 +221,9 @@ if __name__=='__main__':
     decisionNN.train()
     # Data for visualization
     cat_states_list = [np.tile(agents[i].states[..., None], (1, N+1)) for i in range(n_agents)]
-    # heatmaps = []
-    # cov_lvls = []
-    # xy_goals_all = []
-    # probs_all = []
+    heatmaps = []
+    cov_lvls = []
+    xy_goals_all = []
 
     # Training
     for ep in range(epochs):
@@ -218,15 +233,14 @@ if __name__=='__main__':
             train(world, optim)
 
     net_dict = decisionNN.state_dict()
-    # log_dict = {'cat_states_list': cat_states_list,
-    #             'heatmaps': heatmaps,
-    #             'cov_lvls': cov_lvls,
-    #             'xy_goals': xy_goals_all,
-    #             'probs': probs_all,
-    #             'obstacles': obstacles}
+    log_dict = {'cat_states_list': cat_states_list,
+                'heatmaps': heatmaps,
+                'cov_lvls': cov_lvls,
+                'xy_goals': xy_goals_all,
+                'obstacles': obstacles}
     
-    # with open(f'./results/traj_log/train_traj_' + affix + '.pkl', 'wb') as f:
-    #     pickle.dump(log_dict, f)
+    with open(f'./results/traj_log/train_traj_' + affix + '.pkl', 'wb') as f:
+        pickle.dump(log_dict, f)
 
     if save:
         torch.save({'net_dict': net_dict}, 'results/saved_models/model_' + affix+ '.tar')

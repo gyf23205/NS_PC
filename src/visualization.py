@@ -1,19 +1,21 @@
 import numpy as np
-import cv2
-import casadi
 import matplotlib
 matplotlib.use('tkagg')
 import matplotlib.pyplot as plt
 from matplotlib import animation
-from mpc_cbf.plan_dubins import plan_dubins_path
-from mpc_cbf.robot_unicycle import MPC_CBF_Unicycle
-from utils import dm_to_array
-from env import GridWorld
+import matplotlib as mpl
+# from mpc_cbf.plan_dubins import plan_dubins_path
+# from mpc_cbf.robot_unicycle import MPC_CBF_Unicycle
+# from utils import dm_to_array, align_length
+# from env import GridWorld
+from matplotlib.lines import Line2D
+import pickle
 
+mpl.rcParams['font.size'] = 14
+mpl.rcParams['text.usetex'] = True
 
-
-def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, step_horizon, N, reference, save=False):
-    def plot_heatmap(world, obstacle, i):
+def simulate(world, n_agents, cat_states_list, heatmaps, cov_lvls, goals, obstacles, num_frames, init_list, save, save_path):
+    def plot_heatmap(world, i):
         '''
         Inputs:
         world.heatmap: 2-D matrix with size (w, h). Heatmap.
@@ -24,29 +26,41 @@ def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, 
         hm_show: RGB map containing heatmap, obstacles and agents.
         '''
         # Normalize heatmap
-        hm_normed = ((world.heat_max - heatmaps[i]) / world.heat_max * 255).astype(np.uint8)  # substitute world.temp_max with 0.1 will be more apparent
+        hm_normed = (heatmaps[i] / world.heat_max * 255).astype(np.uint8)  # substitute world.temp_max with 0.1 will be more apparent
         
-        # Colormap
-        green_colormap = np.zeros((256, 1, 3), dtype=np.uint8)  # BGR
-        green_colormap[:, 0, 0] = np.linspace(0, 100, 256)  # Blue channel  0 - 100
-        green_colormap[:, 0, 1] = np.arange(256)  # Green channel  0 - 255
-        green_colormap[:, 0, 2] = np.linspace(0, 100, 256)  # Red channel  0 - 100
-        hm_show = cv2.applyColorMap(hm_normed, green_colormap)
-        
-        # # Mark agents
-        # for agent in world.agents:
-        #     dist = np.sqrt((world.x_coord - agent.states[0])**2 + (world.y_coord - agent.states[1])**2)
-        #     agent_area = dist < agent.r_s
-        #     hm_show[agent_area] = [255, 255, 255]  # White color for agent
-        # hm_show[int(agent.state[0]), int(agent.state[1]), :] = 0
-
-        # # Mark Obstacles
-        # hm_show[obstacle == 1] = [50, 50, 255]  
-
+        # # Colormap
+        # blue_colormap = np.zeros((256, 1, 3), dtype=np.uint8)  # BGR
+        # blue_colormap[:, 0, 0] =  np.zeros(256) #np.linspace(0, 100, 256)  # Blue channel  0 - 100
+        # blue_colormap[:, 0, 1] =   np.zeros(256) #np.linspace(0, 100, 256)# Green channel  0 - 255
+        # blue_colormap[:, 0, 2] = np.linspace(100, 200, 256)  # Red channel  0 - 100
+        # hm_show = cv2.applyColorMap(hm_normed, blue_colormap)
+        hm_show = hm_normed
         return hm_show
     
+    def plot_cov_lvl(world, i):
+        '''
+        Inputs:
+        world.heatmap: 2-D matrix with size (w, h). Heatmap.
+        obstacle: Binary 2-D matrix with size (w, h).
+        world.agents: A list contains all the agents of Agent type. Each one has 2-D position
 
-    def create_triangle(state=[0,0,0], h=1, w=0.5, update=False):
+        return:
+        hm_show: RGB map containing heatmap, obstacles and agents.
+        '''
+        # Normalize heatmap
+        cl_normed = (cov_lvls[i] / world.cov_max * 255).astype(np.uint8)  # substitute world.temp_max with 0.1 will be more apparent
+        
+        # Colormap
+        # green_colormap = np.zeros((256, 1, 3), dtype=np.uint8)  # BGR
+        # green_colormap[:, 0, 0] =  np.zeros(256) #np.linspace(0, 100, 256)  # Blue channel  0 - 100
+        # green_colormap[:, 0, 1] = np.linspace(100, 200, 256)  # Red channel  0 - 100
+        # green_colormap[:, 0, 2] =   np.zeros(256) #np.linspace(0, 100, 256)# Green channel  0 - 255
+        # cl_show = cv2.applyColorMap(cl_normed, green_colormap)
+        cl_show = cl_normed
+        return cl_show
+    
+
+    def create_triangle(state=[0,0,0], h=2, w=1.5, update=False):
         x, y, th = state
         triangle = np.array([
             [h, 0   ],
@@ -66,172 +80,193 @@ def simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, 
             return coords[:3, :]
 
     def init():
-        hm.set_data(np.ones(world.heatmap.shape))
-        return path, horizon#, current_state, target_state,
+        scat.set_offsets(np.empty((0, 2)))  
+        # hm.set_data(np.ones(world.heatmap.shape))
+        return path_list, horizon_list, scat
 
     def animate(i):
-        # get variables
-        x = cat_states[0, 0, i]
-        y = cat_states[1, 0, i]
-        th = cat_states[2, 0, i]
+        for k in range(n_agents):
+            # get variables
+            x = cat_states_list[k][0, 0, i]
+            y = cat_states_list[k][1, 0, i]
+            th = cat_states_list[k][2, 0, i]
 
-        # get ref variables
-        x_ref = ref_states[:, 0]
-        y_ref = ref_states[:, 1]
+            # update horizon
+            x_new = cat_states_list[k][0, :, i]
+            y_new = cat_states_list[k][1, :, i]
+            horizon_list[k].set_data(x_new, y_new)
 
+            # update current_state
+            current_state_list[k].set_xy(create_triangle([x, y, th], update=True))
 
-        # update ref path
-        ref_path.set_data(x_ref, y_ref)
-
-        # update path
-        if i == 0:
-            path.set_data(np.array([]), np.array([]))
-        x_new = np.hstack((path.get_xdata(), x))
-        y_new = np.hstack((path.get_ydata(), y))
-        path.set_data(x_new, y_new)
-
-        # update horizon
-        x_new = cat_states[0, :, i]
-        y_new = cat_states[1, :, i]
-        horizon.set_data(x_new, y_new)
-
-        # update current_state
-        current_state.set_xy(create_triangle([x, y, th], update=True))
-
+        # goals_plt.set_data(goals[i][:, 0], goals[i][:, 1])
+        scat.set_offsets(goals[i])
+        scat.set_color(colors)
         # update heatmap
-        img = plot_heatmap(world, None, i)
-        hm.set_data(img)
-        # # update target_state
-        # xy = target_state.get_xy()
-        # target_state.set_xy(xy)
+        img_hm = plot_heatmap(world, i)
+        hm.set_data(img_hm)
 
-        return path, horizon#, current_state, target_state,
+        img_cl = plot_cov_lvl(world, i)
+        cl.set_data(img_cl)
+
+        return horizon_list
 
     # create figure and axes
-    fig, ax = plt.subplots(figsize=(6, 6))
+    fig, ax = plt.subplots(1, 2, figsize=(6, 6))
+    fig.set_size_inches(19.2, 10.8)
     size_world = world.heatmap.shape
     min_scale = 0
-    ax.set_xlim(left = min_scale, right = world.len_grid * size_world[0])
-    ax.set_ylim(bottom = min_scale, top = world.len_grid * size_world[1])
+    ax[0].set_xlim(left = min_scale, right = world.len_grid * size_world[1])
+    ax[0].xaxis.tick_top()
+    ax[0].xaxis.set_label_position('top')
+    ax[0].set_ylim(bottom = world.len_grid * size_world[0], top = min_scale)
+    ax[1].set_xlim(left = min_scale, right = world.len_grid * size_world[1])
+    ax[1].xaxis.tick_top()
+    ax[1].xaxis.set_label_position('top')
+    ax[1].set_ylim(bottom = world.len_grid * size_world[0], top = min_scale)
 
-    # circle = plt.Circle((obs_x, obs_y), obs_diam/2, color='r')
-    # ax.add_patch(circle)
+    colors = ['red', 'purple', 'blue', 'orange']
+    scat = ax[0].scatter([], [], s=50, c='r')
+    scat.set_color(colors)
+    # Obstacles
+    for (ox, oy, obsr) in obstacles:
+        circle = plt.Circle((ox, oy), obsr, color='r')
+        ax[0].add_patch(circle)
+
+        circle1 = plt.Circle((ox, oy), obsr, color='r')
+        ax[1].add_patch(circle1)
 
     # create lines:
     #   path
-    path, = ax.plot([], [], 'r', linewidth=2)
+    path_list = []
+    ref_path_list = []
+    horizon_list = []
+    current_state_list = []
+    for k in range(n_agents):
+        path, = ax[0].plot([], [], 'r', linewidth=2)
+        ref_path, = ax[0].plot([], [], 'b', linewidth=2)
+        horizon, = ax[0].plot([], [], 'x-g', alpha=0.5)
+        current_triangle = create_triangle(init_list[k, :])
+        current_state = ax[0].fill(current_triangle[:, 0], current_triangle[:, 1], color=colors[k])
+        current_state = current_state[0]
 
-    ref_path, = ax.plot([], [], 'b', linewidth=2)
-    #   horizon
-    horizon, = ax.plot([], [], 'x-g', alpha=0.5)
+        path_list.append(path)
+        ref_path_list.append(ref_path)
+        horizon_list.append(horizon)
+        current_state_list.append(current_state)
 
+    # goals_plt = ax[0].scatter(goals[0][:, 0], goals[0][:, 1])
+    hm = ax[0].imshow(np.ones(heatmaps[0].shape)*255, origin='lower', extent=[0., world.len_grid * size_world[0], 0, world.len_grid * size_world[1]], cmap='viridis', vmin=0, vmax=255)
+    cl = ax[1].imshow(np.ones(cov_lvls[0].shape)*255, origin='lower', extent=[0., world.len_grid * size_world[0], 0, world.len_grid * size_world[1]], cmap='viridis', vmin=0, vmax=255)
+    ax[0].set_xlabel('x position')
+    ax[1].set_xlabel('y position')
+    blue_cmp = plt.get_cmap('viridis', 256)
+    cmp = plt.get_cmap('viridis', 256)
+    # blue_cmp = ListedColormap(blue_cmp(np.linspace(0, 0.3, 256)))
+    # cmp = ListedColormap(cmp(np.linspace(0, 0.3, 256)))
+    
+    fig.colorbar(mpl.cm.ScalarMappable(norm=mpl.colors.Normalize(0, 1), cmap=blue_cmp),
+             ax=ax[0], orientation='vertical',fraction=0.046, pad=0.04, label='Importance density')
+    
+    fig.colorbar(mpl.cm.ScalarMappable(norm=mpl.colors.Normalize(0, 1), cmap=cmp),
+             ax=ax[1], orientation='vertical',fraction=0.046, pad=0.04, label='Coverage level')
+    
+    legend_elements = [Line2D([0], [0], marker='>', color='y', markerfacecolor='y', markersize=15, label='Robots'),
+                       Line2D([0], [0], marker='o',color='r', markerfacecolor='r', markersize=15,label='Obstacles',),
+                   Line2D([0], [0], marker='x',color='g', markerfacecolor='g', markersize=15,label='MPC Predicted Path',),
+                   ]
 
-    hm = plt.imshow(np.ones(heatmaps[0].shape)*255, origin='lower', extent=[0., world.len_grid * size_world[0], 0, world.len_grid * size_world[1]])
-
-    #   current_state
-    current_triangle = create_triangle(reference[:3])
-    current_state = ax.fill(current_triangle[:, 0], current_triangle[:, 1], color='r')
-    current_state = current_state[0]
-    # #   target_state
-    # target_triangle = create_triangle(reference[3:])
-    # target_state = ax.fill(target_triangle[:, 0], target_triangle[:, 1], color='b')
-    # target_state = target_state[0]
+    ax[0].legend(handles=legend_elements, loc='upper right')
 
     sim = animation.FuncAnimation(
         fig=fig,
-        func=animate,
+        func = animate,
         init_func=init,
         frames=num_frames,
-        #interval=step_horizon*100,
-        interval=100,
+        interval=0.1,
         blit=False,
         repeat=False
     )
-
     if save == True:
-        sim.save('results/heatmap.gif', writer='ffmpeg', fps=30)
-    plt.show()
+        sim.save(save_path, writer='ffmpeg', fps=50)
+    # plt.show()
     return sim
 
-def main(args=None):
-    size_world = (50, 50)
-    # rate = np.ones(size_world)*0.01
+
+def plot_cov(cov_lvls, heatmaps):
+    cov_low_imp = []
+    cov_high_imp = []
+    weighted_cov = []
+    for i in range(len(cov_lvls)):
+        cov_low_imp.append(np.mean(cov_lvls[i][:, 0:15]))
+        cov_high_imp.append(np.mean(cov_lvls[i][:, 15:]))
+        weighted_cov.append(np.mean(heatmaps[i]*cov_lvls[i]))
+        if i > 0:
+            print(np.mean(heatmaps[i] - heatmaps[i-1]))
+
+    plt.plot(cov_low_imp)
+    plt.plot(cov_high_imp)
+    plt.plot(weighted_cov)
+    plt.title('Coverage Level')
+    plt.legend(['low importance', 'high importance', 'weighted mean'])
+    plt.show()
+    
+def animate_probs(probs, size_world, save=False, save_path='probs_anim.mp4'):
+    """
+    Animate the probabilities of each agent over time.
+    probs: list of np arrays, each of shape (n_agent, size_world[0]*size_world[1])
+    size_world: tuple, (height, width)
+    """
+    # import matplotlib.pyplot as plt
+    # from matplotlib import animation
+
+    n_frames = len(probs)
+    n_agent = probs[0].shape[0]
+    h, w = size_world
+
+    fig, axes = plt.subplots(1, n_agent, figsize=(5*n_agent, 5))
+    if n_agent == 1:
+        axes = [axes]
+
+    ims = []
+    for agent_id in range(n_agent):
+        axes[agent_id].set_title(f'Agent {agent_id}')
+        axes[agent_id].set_xlabel('X')
+        axes[agent_id].set_ylabel('Y')
+
+    def init():
+        return []
+
+    def animate(i):
+        im_list = []
+        for agent_id in range(n_agent):
+            axes[agent_id].cla()
+            axes[agent_id].set_title(f'Agent {agent_id}')
+            axes[agent_id].set_xlabel('X')
+            axes[agent_id].set_ylabel('Y')
+            prob_map = probs[i, agent_id, :].reshape(h, w)
+            # if agent_id == 0:
+            #     print(prob_map[:10, :10])  # Print the first 10x10 block of the first agent's probability map
+            im = axes[agent_id].imshow(prob_map, origin='lower', cmap='viridis', vmin=np.min(probs), vmax=np.max(probs))
+            # fig.colorbar(im, ax=axes[agent_id], fraction=0.046, pad=0.04)
+            im_list.append(im)
+        return im_list
+
+    anim = animation.FuncAnimation(
+        fig, animate, init_func=init, frames=n_frames, interval=200, blit=False, repeat=False
+    )
+   
+    if save:
+        anim.save(save_path, writer='ffmpeg', fps=5)
+    # plt.show()
+    return anim
+
+if __name__ == '__main__':
+    size_world = (30, 30)
     len_grid = 1
-    heatmap = np.ones(size_world) * 0.1
-    heatmap[30:40, 20:30] = 0.7
-    world = GridWorld(size_world, len_grid, heatmap, obstacles=None)
+    probs = []
+    for j in range(100):
+        prob = np.ones((4, size_world[0] * size_world[1])) * (j / 100)
+        probs.append(prob.copy())
 
-    Q_x = 10
-    Q_y = 10
-    Q_theta = 10
-    R_v = 0.5
-    R_omega = 0.005
-
-    dt = 0.1
-    N = 20
-    # idx = 0
-    t0 = 0
-
-    # x in [0, size_world[0]], y in [0, size_world[1] * world.len_grid]
-    x_0 = 0
-    y_0 = 0
-    theta_0 = 0
-
-    # x in [0, size_world[0]], y in [0, size_world[1]* world.len_grid]
-    x_goal = 12
-    y_goal = 18
-    theta_goal = np.pi/2
-
-    r = 1 
-    v = 1
-    path_x, path_y, path_yaw, _, _ = plan_dubins_path(x_0, y_0, theta_0, x_goal, y_goal, theta_goal, r, step_size=v*dt)
-
-    ref_states = np.array([path_x, path_y, path_yaw]).T
-
-    v_lim = [-1, 1]
-    omega_lim = [-casadi.pi/4, casadi.pi/4]
-    Q = [Q_x, Q_y, Q_theta]
-    R = [R_v, R_omega]
-    obstacles = [(14,4,3), (18,15,3), (6,19,3), (29, 44,3), (38,15,3), (36,29,3), (25, 26,3)]
-
-    # TODO Move the definition of obstacles to env, not in agents
-    init_state = [x_0, y_0, theta_0]
-    mpc_cbf = MPC_CBF_Unicycle(0, dt,N, v_lim, omega_lim, Q, R, init_state=np.array(init_state), obstacles= obstacles, flag_cbf=False)
-    world.add_agents([mpc_cbf])
-    state_0 = casadi.DM(init_state)
-    u0 = casadi.DM.zeros((mpc_cbf.n_controls, N))
-    X0 = casadi.repmat(state_0, 1, N + 1)
-    cat_states = dm_to_array(X0)
-    cat_controls = dm_to_array(u0[:, 0])
-
-    # x_arr = [x_0]
-    # y_arr = [y_0]
-    # states_hist = [np.array(init_state)]
-    heatmaps = [np.copy(world.heatmap)]
-    for i in range(len(ref_states)): 
-        u, X_pred = mpc_cbf.solve(X0, u0, ref_states, i)
-        
-        cat_states = np.dstack((cat_states, dm_to_array(X_pred)))
-        cat_controls = np.dstack((cat_controls, dm_to_array(u[:, 0])))
-        
-        t0, X0, u0 = mpc_cbf.shift_timestep(dt, t0, X_pred, u)
-        mpc_cbf.states = X0[:, 1]
-        # states_hist.append(mpc_cbf.states)
-        world.step()
-        
-        heatmaps.append(np.copy(world.heatmap))
-        # x_arr.append(X0[0,1])
-        # y_arr.append(X0[1,1])
-        # idx += 1
-    
-    num_frames = len(ref_states)
-    # To be replaced
-    simulate(world, ref_states, cat_states, heatmaps, cat_controls, num_frames, dt, N,
-         np.array([x_0, y_0, theta_0, x_goal, y_goal, theta_goal]), save=False)
-
-if __name__ == "__main__":
-    main()
-
-
-
-    
+    animate_probs(np.stack(probs), size_world, save=True, save_path='probs_anim.mp4')

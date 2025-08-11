@@ -6,14 +6,14 @@ import numpy as np
 import hypers
 from utils import action2waypoints
 from env import GridWorld
-from networks.gcn import GraphConvNet, GCNPos, NetTest
+from networks.gcn import GraphConvNet, GCNPos, NetCentralized
 from mpc_cbf.robot_unicycle import MPC_CBF_Unicycle
 from mpc_cbf.plan_dubins import plan_dubins_path
 from utils import dm_to_array
 from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
 
-def test(world):
+def test_voronoi_sup(world):
     criteria = torch.nn.CrossEntropyLoss()
     agents = world.agents
     observations = world.check()
@@ -67,7 +67,7 @@ def test(world):
         targets.append(idx)
     targets = torch.tensor(targets, dtype=int, device=dev)
     loss = criteria(logits_all, targets)
-    # print(compute_gradient_norm(decisionNN))
+
     diff = 0
     for i in range(n_agents):
         diff += np.linalg.norm(goals[i] - goals_oracle[i])
@@ -97,17 +97,7 @@ def test(world):
     writer.add_scalar("Cost/world", cost_world.sum().detach().cpu().numpy(), ep)
     # writer.add_scalar("Cost/agent", cost_agents.detach().cpu().numpy(), ep * T + t)
     writer.add_scalar("Loss/train", loss.detach().cpu().numpy(), ep)
-
-def compute_gradient_norm(model, norm_type=2):
-    with torch.no_grad():
-        total_norm = 0.0
-        for param in model.parameters():
-            if param.grad is not None:
-                param_norm = param.grad.norm(norm_type)
-                total_norm += param_norm.item() ** norm_type
-        total_norm = total_norm ** (1.0 / norm_type)
-    return total_norm
-
+    
 
 if __name__=='__main__':
     # Set training to be deterministic
@@ -169,13 +159,13 @@ if __name__=='__main__':
     # t0_list = [0 for i in range(n_agents)]
     agents = [MPC_CBF_Unicycle(i, dt, N, v_lim, omega_lim, Q, R, init_state=state_init[i], obstacles = obstacles, flag_cbf=True, r_s=r_s, r_c=r_c) for i in range(n_agents)]
     # decisionNN = GraphConvNet(hypers.n_embed_channel, size_kernal=3, dim_observe=2*r_s, size_world=size_world, n_rel=hypers.n_rel, n_head=4).to(dev)
-    decisionNN = GCNPos(hypers.n_embed_channel, size_kernal=3, dim_observe=int(2 * np.ceil(r_s / len_grid) + 1),
+    decisionNN = NetCentralized(hypers.n_embed_channel, size_kernal=3, dim_observe=int(2 * np.ceil(r_s / len_grid) + 1),
                          size_world=size_world, n_rel=hypers.n_rel, n_head=4).to(dev)
     state_dict = torch.load('results/pretrained_models/model_agent4_epoch50.tar', weights_only=True)['net_dict']
     decisionNN.load_state_dict(state_dict)
-    for i in range(n_agents):
-        # During the training time, all the agents share the same decision network. Modify this configuration can achieve distributed learning.
-        agents[i].decisionNN = decisionNN
+    # for i in range(n_agents):
+    #     # During the training time, all the agents share the same decision network. Modify this configuration can achieve distributed learning.
+    #     agents[i].decisionNN = decisionNN
     world.add_agents(agents)
     decisionNN.eval()
 
@@ -184,11 +174,10 @@ if __name__=='__main__':
     heatmaps = []
     cov_lvls = []
 
-    # Pretrain
+    # Test
     for ep in range(epochs_test):
-        test(world)
+        test_voronoi_sup(world)
 
-    net_dict = decisionNN.state_dict()
     log_dict = {'cat_states_list': cat_states_list,
                 'heatmaps': heatmaps,
                 'cov_lvls': cov_lvls,

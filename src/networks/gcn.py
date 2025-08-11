@@ -142,36 +142,6 @@ class GCNPosOnly(nn.Module):
             x = F.leaky_relu(self.pos_embed(pos))
         return x    
 
-class NetTest(nn.Module):
-    def __init__(self, n_embed_channel, size_kernal, dim_observe, size_world, n_rel, n_head=8):
-        super().__init__()
-        self.dim_map = size_world[0] * size_world[1]
-        self.linear1 = nn.Linear(3, 256)
-
-        self.linear2 = nn.Linear(256, 512)
-        # self.pos_linear1 = nn.Linear(3, 128)
-        # self.pos_linear2 = nn.Linear(128, 256)
-        self.out = nn.Linear(512, self.dim_map)
-        
-
-    def forward(self, nothing, neighbors, pos):
-        x = self.linear1(pos)
-        x = F.leaky_relu(x)
-        x = self.linear2(x)
-        x = F.leaky_relu(x)
-        out = torch.squeeze(self.out(x))
-        prob = F.softmax(out, dim=0)
-        return prob
-    
-    def embed_observe(self, nothing, pos):
-        with torch.autograd.no_grad():
-            x = self.linear1(pos)
-            x = F.leaky_relu(x)
-            x = self.linear2(x)
-            x = F.leaky_relu(x)
-        return x
-    
-
 class NetCentralized(nn.Module):
     def __init__(self, size_world, n_agents):
         super().__init__()
@@ -183,7 +153,7 @@ class NetCentralized(nn.Module):
         h_out = size_world[0] - 2
         w_out = size_world[1] - 2
         self.pos_embed = nn.Linear(2 * n_agents, 256)
-        self.linear1 = nn.Linear(256+h_out*w_out, 1024)
+        self.linear1 = nn.Linear(256 + h_out*w_out, 1024)
         # self.pos_linear1 = nn.Linear(3, 128)
         # self.pos_linear2 = nn.Linear(128, 256)
         self.out = nn.Linear(1024, self.dim_map * n_agents)
@@ -193,7 +163,7 @@ class NetCentralized(nn.Module):
         maps = self.conv(maps)
         # maps = self.pool(maps)
         x = self.pos_embed(pos)
-        x = F.leaky_relu(x) # (n_agents, 256)
+        x = F.leaky_relu(x)
         x = torch.cat([x.view(1, -1), maps.view(1, -1)], dim=-1)
         x = self.linear1(x)
         x = F.leaky_relu(x)
@@ -204,3 +174,38 @@ class NetCentralized(nn.Module):
     
     def embed_observe(self, nothing):
         return
+    
+
+class NetCentralizedOnePos(nn.Module):
+    def __init__(self, size_world, n_agents):
+        super().__init__()
+        self.size_world = size_world
+        self.n_agents = n_agents
+        self.dim_map = size_world[0] * size_world[1]
+        self.conv = nn.Conv2d(2, 1, 3)
+        # self.pool = nn.MaxPool2d(3)
+        h_out = size_world[0] - 2
+        w_out = size_world[1] - 2
+        self.pos_embed = nn.Linear(3, 32)
+        self.linear1 = nn.Linear(32 + h_out*w_out, 1024)
+        # self.pos_linear1 = nn.Linear(3, 128)
+        # self.pos_linear2 = nn.Linear(128, 256)
+        self.out = nn.Linear(1024, self.dim_map)
+
+    def forward(self, heatmap, cov_lvl, pos):
+        maps = torch.stack([heatmap, cov_lvl])
+        maps = self.conv(maps)
+        # maps = self.pool(maps)
+        x = self.pos_embed(pos)
+        x = F.leaky_relu(x)
+        x = torch.cat([x.view(1, -1), maps.view(1, -1)], dim=-1)
+        x = self.linear1(x)
+        x = F.leaky_relu(x)
+        # x = torch.cat([x, pos], dim=-1)
+        logits = torch.squeeze(self.out(x))
+        # probs = F.softmax(logits, dim=1)
+        return logits
+    
+    def embed_observe(self, nothing):
+        return
+    
